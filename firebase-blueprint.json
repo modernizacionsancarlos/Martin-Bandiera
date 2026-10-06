@@ -1,0 +1,279 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "System user account with credentials, role and customized granular permissions",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["SuperAdmin", "Admin", "Gerente", "Capataz", "Empleado", "AuditorExterno"] },
+        "password": { "type": "string", "maxLength": 100 },
+        "cargo": { "type": "string", "maxLength": 100 },
+        "cuadrilla": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "active": { "type": "boolean" },
+        "tenantId": { "type": "string" },
+        "companyName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "customPermissions": { "type": "object" },
+        "capatazPercentage": { "type": "number" },
+        "category": { "type": "string" },
+        "isAdministrative": { "type": "boolean" },
+        "hourlyRate": { "type": "number" },
+        "salaryMonthly": { "type": "number" }
+      },
+      "required": ["uid", "email", "displayName", "role"]
+    },
+    "Worker": {
+      "title": "Worker Item",
+      "description": "Personnel and crew member details, roles, categories, hourly rates and capataz profit percentages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "role": { "type": "string", "enum": ["SuperAdmin", "Admin", "Gerente", "Capataz", "Empleado"] },
+        "category": { "type": "string", "enum": ["Oficial", "Ayudante", "Capataz", "Administrativo"] },
+        "isAdministrative": { "type": "boolean" },
+        "cargo": { "type": "string", "maxLength": 100 },
+        "cuadrilla": { "type": "string", "maxLength": 100 },
+        "phone": { "type": "string", "maxLength": 50 },
+        "email": { "type": "string" },
+        "active": { "type": "boolean" },
+        "capatazPercentage": { "type": "number" },
+        "referenceSalary": { "type": "number" },
+        "salaryMonthly": { "type": "number" },
+        "hourlyRate": { "type": "number" },
+        "specialty": { "type": "string" },
+        "assignedProjectsCount": { "type": "number" }
+      },
+      "required": ["id", "name", "role", "active"]
+    },
+    "TechnicalAuditRecord": {
+      "title": "Technical Audit Record",
+      "description": "Technical field report / remito operation record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "remitoId": { "type": "string", "maxLength": 50 },
+        "clientName": { "type": "string", "maxLength": 150 },
+        "workPoint": { "type": "string", "maxLength": 150 },
+        "date": { "type": "string" },
+        "hoursWorked": { "type": "number" },
+        "leadTech": { "type": "string" },
+        "helpers": { "type": "array" },
+        "laborDirectCost": { "type": "number" },
+        "materialsCost": { "type": "number" },
+        "totalDirectCost": { "type": "number" },
+        "capatazProfit": { "type": "number" },
+        "capatazCommissionPct": { "type": "number" },
+        "billedToClient": { "type": "number" },
+        "collectedFromClient": { "type": "number" },
+        "billingStatus": { "type": "string" },
+        "collectionStatus": { "type": "string" }
+      },
+      "required": ["id", "remitoId", "clientName", "date"]
+    },
+    "Client": {
+      "title": "Client Item",
+      "description": "Company client with associated farms or work points",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 150 },
+        "workPoints": { "type": "array" },
+        "cuit": { "type": "string" },
+        "contactName": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Material": {
+      "title": "Material Item",
+      "description": "Inventory material and supply item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string", "maxLength": 50 },
+        "name": { "type": "string", "maxLength": 150 },
+        "category": { "type": "string" },
+        "unit": { "type": "string" },
+        "unitCost": { "type": "number" },
+        "stock": { "type": "number" }
+      },
+      "required": ["id", "name", "unitCost"]
+    },
+    "SystemSetting": {
+      "title": "System Setting",
+      "description": "System initialization flag and persistent state flags",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "isZeroState": { "type": "boolean" },
+        "initialized": { "type": "boolean" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "FinancialReport": {
+      "title": "Financial Report Metric",
+      "description": "Financial monthly metrics, billed and collected balances",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "period": { "type": "string" },
+        "clientName": { "type": "string" },
+        "projectName": { "type": "string" },
+        "code": { "type": "string" },
+        "cargado": { "type": "number" },
+        "facturado": { "type": "number" },
+        "cobrado": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "period", "clientName"]
+    },
+    "TechnicalParameter": {
+      "title": "Technical Cost Parameter",
+      "description": "Base rates for fuel, technician hourly cost, logistics and insurance",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dieselPrice": { "type": "number" },
+        "horaBase": { "type": "number" },
+        "seguroViaje": { "type": "number" },
+        "amortizacionViaje": { "type": "number" }
+      },
+      "required": ["id"]
+    },
+    "ArchivedReceipt": {
+      "title": "Archived Receipt",
+      "description": "Signed receipts, tax retentions, and payment documents",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "receiptNumber": { "type": "string" },
+        "clientName": { "type": "string" },
+        "date": { "type": "string" },
+        "totalAmount": { "type": "number" }
+      },
+      "required": ["id", "receiptNumber", "clientName"]
+    },
+    "Project": {
+      "title": "Project Item",
+      "description": "Engineering project, timeline, and budget",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "client": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "title"]
+    },
+    "MaintenanceService": {
+      "title": "Maintenance Service",
+      "description": "Electromechanical maintenance orders and assignments",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "title": { "type": "string" },
+        "client": { "type": "string" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "code", "title"]
+    },
+    "Vehicle": {
+      "title": "Vehicle Item",
+      "description": "Vehicle fleet item indexed by license plate with amortization and odometer tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "patente": { "type": "string" },
+        "brand": { "type": "string" },
+        "model": { "type": "string" },
+        "year": { "type": "number" },
+        "type": { "type": "string" },
+        "purchaseDate": { "type": "string" },
+        "purchasePrice": { "type": "number" },
+        "residualValue": { "type": "number" },
+        "usefulLifeKm": { "type": "number" },
+        "currentMileageKm": { "type": "number" },
+        "status": { "type": "string" }
+      },
+      "required": ["id", "patente", "purchasePrice", "usefulLifeKm"]
+    },
+    "VehicleEvent": {
+      "title": "Vehicle Event",
+      "description": "Maintenance, odometer, oil change, parts, or mechanical workshop event per vehicle",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "patente": { "type": "string" },
+        "type": { "type": "string", "enum": ["kilometraje", "cambio_aceite", "mecanico", "repuesto", "mantenimiento_gral"] },
+        "date": { "type": "string" },
+        "mileageKm": { "type": "number" },
+        "title": { "type": "string" },
+        "cost": { "type": "number" }
+      },
+      "required": ["id", "vehicleId", "patente", "type", "date", "mileageKm"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Application users and role profiles"
+    },
+    "/workers/{workerId}": {
+      "schema": "Worker",
+      "description": "Personnel and crew records"
+    },
+    "/auditRecords/{recordId}": {
+      "schema": "TechnicalAuditRecord",
+      "description": "Field reports and remitos"
+    },
+    "/clients/{clientId}": {
+      "schema": "Client",
+      "description": "Client directory and work locations"
+    },
+    "/materials/{materialId}": {
+      "schema": "Material",
+      "description": "Materials inventory list"
+    },
+    "/systemSettings/{settingId}": {
+      "schema": "SystemSetting",
+      "description": "System state flags"
+    },
+    "/financials/{metricId}": {
+      "schema": "FinancialReport",
+      "description": "Financial metrics"
+    },
+    "/technicalParameters/{paramId}": {
+      "schema": "TechnicalParameter",
+      "description": "Technical cost parameters"
+    },
+    "/archivedReceipts/{receiptId}": {
+      "schema": "ArchivedReceipt",
+      "description": "Receipts and payment proofs"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Engineering projects"
+    },
+    "/maintenanceServices/{serviceId}": {
+      "schema": "MaintenanceService",
+      "description": "Electromechanical maintenance services"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Vehicles fleet registered by patente"
+    },
+    "/vehicleEvents/{eventId}": {
+      "schema": "VehicleEvent",
+      "description": "Odometer, mechanics, oil change, parts and general maintenance events"
+    }
+  }
+}

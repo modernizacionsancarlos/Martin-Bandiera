@@ -1,0 +1,6 @@
+{
+  "name": "JOB Martin Bandiera",
+  "description": "Ecosistema SaaS de gestión empresarial para ingeniería, obras, mantenimiento técnico, auditoría, flota de vehículos con análisis de amortización por patente y control financiero.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
