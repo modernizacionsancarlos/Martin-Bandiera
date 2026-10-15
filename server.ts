@@ -3,25 +3,181 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import fs from 'fs';
+import type { NextFunction, Request, Response } from 'express';
+import { createAdminUsersRouter } from './server/adminUsers';
+import { scanRemitoImage, OcrError } from './server/ocr';
+import { createIntakeService, createFieldImageRouter, createCloudImageStore, getAdminFirestore, type Extractor } from './server/intake';
+import { createWhatsAppRouter, createGraphClient } from './server/whatsapp';
+import { createDriveIntakeRouter, createGoogleDriveClient, loadFolderConfig, runDriveIntake } from './server/driveIntake';
+import { sanitizeExtraction } from './src/utils/remitoIntake';
 
 dotenv.config();
+
+const firebaseConfig = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'firebase-applet-config.json'), 'utf8'));
+
+// --- Autenticación de la API -------------------------------------------------
+// Verifica el ID token de Firebase Auth y que la cuenta tenga un rol activo en
+// /userRoles/{uid}. La lectura de Firestore usa el token del propio usuario, por lo que
+// las reglas de seguridad deciden el resultado (no hace falta credencial de servidor).
+const AUTH_CACHE_TTL_MS = 60_000;
+const authCache = new Map<string, { uid: string; expires: number }>();
+
+async function verifyActiveStaff(idToken: string): Promise<string | null> {
+  const cached = authCache.get(idToken);
+  if (cached && cached.expires > Date.now()) return cached.uid;
+
+  const lookup = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idToken })
+    }
+  );
+  if (!lookup.ok) return null;
+  const lookupData: any = await lookup.json();
+  const uid: string | undefined = lookupData?.users?.[0]?.localId;
+  if (!uid) return null;
+
+  const roleUrl =
+    `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}` +
+    `/databases/${encodeURIComponent(firebaseConfig.firestoreDatabaseId || '(default)')}/documents/userRoles/${uid}`;
+  const roleRes = await fetch(roleUrl, { headers: { Authorization: `Bearer ${idToken}` } });
+  if (!roleRes.ok) return null;
+  const roleDoc: any = await roleRes.json();
+  if (roleDoc?.fields?.active?.booleanValue !== true) return null;
+
+  authCache.set(idToken, { uid, expires: Date.now() + AUTH_CACHE_TTL_MS });
+  return uid;
+}
+
+// Límite simple por usuario para proteger la cuota de Gemini.
+const RATE_WINDOW_MS = 10 * 60_000;
+const RATE_MAX_REQUESTS = 40;
+const rateBuckets = new Map<string, number[]>();
+
+function withinRateLimit(uid: string): boolean {
+  const now = Date.now();
+  const recent = (rateBuckets.get(uid) || []).filter(t => now - t < RATE_WINDOW_MS);
+  if (recent.length >= RATE_MAX_REQUESTS) {
+    rateBuckets.set(uid, recent);
+    return false;
+  }
+  recent.push(now);
+  rateBuckets.set(uid, recent);
+  return true;
+}
+
+// En la demo no hay sesión real ni se consume la cuota de IA.
+function demoGuard(_req: Request, res: Response, next: NextFunction) {
+  if (process.env.DEMO_MODE === '1') {
+    return res.status(503).json({ success: false, error: 'El escaneo con IA no está disponible en la demo.' });
+  }
+  next();
+}
+
+async function requireStaff(req: Request, res: Response, next: NextFunction) {
+  try {
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+    if (!token) {
+      return res.status(401).json({ success: false, error: 'Se requiere iniciar sesión.' });
+    }
+    const uid = await verifyActiveStaff(token);
+    if (!uid) {
+      return res.status(403).json({ success: false, error: 'Sesión inválida o usuario sin acceso.' });
+    }
+    if (!withinRateLimit(uid)) {
+      return res.status(429).json({ success: false, error: 'Demasiadas lecturas de remitos. Intente en unos minutos.' });
+    }
+    next();
+  } catch (err) {
+    console.error('[Auth] Error verificando sesión:', err);
+    res.status(500).json({ success: false, error: 'No se pudo verificar la sesión.' });
+  }
+}
 
 async function startServer() {
   const app = express();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Accept larger payloads for high resolution remito photos (up to 50MB)
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  // Canales de entrada de remitos (WhatsApp y Drive). Se montan antes del lector de JSON global:
+  // la firma de WhatsApp se verifica sobre el cuerpo exacto. Cada canal se activa solo si está configurado.
+  if (process.env.DEMO_MODE !== '1') {
+    try {
+      const db = getAdminFirestore(firebaseConfig.projectId, firebaseConfig.firestoreDatabaseId);
+      const imageStore = await createCloudImageStore(firebaseConfig.storageBucket);
+      const extractor: Extractor = async (image, catalog) => {
+        if (!ai) throw new Error('GEMINI_API_KEY no configurada');
+        return scanRemitoImage(ai, {
+          base64: image.base64,
+          mimeType: image.mimeType,
+          knownClients: catalog.clients.map(c => c.razonSocial).slice(0, 60),
+          knownWorkers: catalog.workers.map(w => w.name).slice(0, 60)
+        });
+      };
+      const intake = createIntakeService({ db, extractor, imageStore });
+      app.use('/api/admin', createFieldImageRouter({ db, imageStore, projectId: firebaseConfig.projectId }));
 
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+      const { WHATSAPP_APP_SECRET, WHATSAPP_VERIFY_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID } = process.env;
+      if (WHATSAPP_APP_SECRET && WHATSAPP_VERIFY_TOKEN && WHATSAPP_TOKEN && WHATSAPP_PHONE_NUMBER_ID) {
+        const wa = createWhatsAppRouter({
+          appSecret: WHATSAPP_APP_SECRET,
+          verifyToken: WHATSAPP_VERIFY_TOKEN,
+          intake,
+          graph: createGraphClient({ token: WHATSAPP_TOKEN, phoneNumberId: WHATSAPP_PHONE_NUMBER_ID })
+        });
+        app.use('/api/whatsapp', wa.router);
+        console.log('[WhatsApp] Canal de entrada de remitos activo.');
+      }
+
+      if (process.env.INTAKE_CRON_SECRET) {
+        const drive = await createGoogleDriveClient();
+        app.use(
+          '/api/intake',
+          createDriveIntakeRouter({
+            secret: process.env.INTAKE_CRON_SECRET,
+            run: async () => runDriveIntake({ intake, drive, folders: await loadFolderConfig(db) })
+          })
+        );
+        console.log('[Drive] Canal de entrada de remitos activo.');
+      }
+    } catch (err) {
+      console.warn('[Intake] Canales de entrada de remitos deshabilitados:', err);
+    }
+  }
+
+  // Fotos de remitos en base64: 15MB alcanzan para una imagen de alta resolución
+  app.use(express.json({ limit: '15mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+  // Sin GEMINI_API_KEY el servidor igual arranca; solo falla el escaneo de remitos con IA.
+  const ai = process.env.GEMINI_API_KEY
+    ? new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
+        },
+      })
+    : null;
+  if (!ai) {
+    console.warn('[Gemini] GEMINI_API_KEY no está configurada: el escaneo de remitos con IA estará deshabilitado.');
+  }
+
+  // Administración de cuentas de acceso (alta, clave temporal, baja). En la demo se resuelve en el navegador.
+  if (process.env.DEMO_MODE !== '1') {
+    try {
+      app.use(
+        '/api/admin',
+        createAdminUsersRouter({ projectId: firebaseConfig.projectId, firestoreDatabaseId: firebaseConfig.firestoreDatabaseId })
+      );
+    } catch (err) {
+      console.warn('[AdminUsers] Administración de usuarios por servidor deshabilitada:', err);
+    }
+  }
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
@@ -29,175 +185,31 @@ async function startServer() {
   });
 
   // AI OCR Scan Remito endpoint
-  app.post('/api/ai/scan-remito', async (req, res) => {
+  app.post('/api/ai/scan-remito', demoGuard, requireStaff, async (req, res) => {
+    if (!ai) {
+      return res.status(503).json({ success: false, error: 'El escaneo con IA no está configurado en el servidor (falta GEMINI_API_KEY).' });
+    }
     try {
       const { image, mimeType = 'image/jpeg', knownClients = [], knownWorkers = [] } = req.body;
-
-      if (!image) {
+      if (!image || typeof image !== 'string') {
         return res.status(400).json({ success: false, error: 'Se requiere una imagen en base64 para procesar el remito.' });
       }
-
       // Remove data URL prefix if sent
-      const base64Data = image.replace(/^data:[a-zA-Z0-9.-]+\/[a-zA-Z0-9.+]+;base64,/, '');
-
-      const clientHints = Array.isArray(knownClients) && knownClients.length > 0 
-        ? `\nClientes / Empresas conocidas en el sistema para referencia: ${knownClients.slice(0, 60).join(', ')}.`
-        : '';
-      const workerHints = Array.isArray(knownWorkers) && knownWorkers.length > 0 
-        ? `\nPersonal / Técnicos registrados para referencia de nombres: ${knownWorkers.slice(0, 60).join(', ')}.`
-        : '';
-
-      const systemInstruction = `Eres un asistente especializado en reconocimiento óptico de caracteres (OCR) de alta precisión para digitalizar remitos manuscritos (escritos a mano en papel o talonario físico) para empresas de obras, ingeniería eléctrica y mantenimiento en Argentina.
-Analiza con detenimiento la imagen provista y extrae con máxima fidelidad cada campo escrito a mano.
-${clientHints}
-${workerHints}
-
-Criterios de extracción:
-1. remitoPapel: Número de remito en papel o talonario (ej: "0001-0004523", "4523"). Si no se aprecia, dejar en blanco.
-2. fecha: Fecha del remito en formato YYYY-MM-DD. Si solo indica día y mes, estima el año actual (2025 o 2026).
-3. cliente: Nombre de la empresa, bodega o contratista indicado.
-4. ubicacion: Localidad, finca o departamento geográfico (ej: "San Carlos", "Valle de Uco", "Tupungato").
-5. puntoTrabajo: Área, máquina o pozo puntual atendido (ej: "Pozo 4", "Tablero General", "Sala de Bombas").
-6. descripcion: Transcripción detallada y limpia de todas las tareas y trabajos técnicos realizados anotados en el papel.
-7. horaEntrada: Hora de llegada en formato HH:MM (ej: "08:00").
-8. horaSalida: Hora de retiro en formato HH:MM (ej: "12:30").
-9. horasTrabajadas: Cantidad de horas dedicadas (número flotante, ej: 4.5). Si figuran entrada y salida, calcula las horas.
-10. kilometros: Kilómetros de traslado si figuran en el remito.
-11. viajes: Cantidad de viajes (por defecto 1 si hubo traslado, o 0 si no hubo).
-12. esGuardia: true si especifica guardia, urgencia, o fuera de horario; de lo contrario false.
-13. tecnicoLider: Nombre del técnico a cargo o firmante del remito.
-14. cuadrilla: Lista de los demás operarios, ayudantes u oficiales que participaron con su nombre y rol deducido ("Oficial" o "Ayudante").
-15. materiales: Lista de materiales o repuestos utilizados con su descripción y cantidad si figuran.
-16. observaciones: Comentarios sobre palabras de difícil lectura o notas complementarias.
-17. confianzaLectura: Porcentaje estimado (0 a 100) de claridad de la caligrafía manuscrita.`;
-
-      let response;
-      // Prioritize gemini-3.6-flash which is responsive, high-capacity, and avoids 503 high-demand errors
-      const candidateModels = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
-      let lastError: any = null;
-
-      for (const model of candidateModels) {
-        // Try up to 2 attempts per candidate model
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            console.log(`[Gemini OCR] Trying model ${model} (attempt ${attempt}/2)...`);
-            response = await ai.models.generateContent({
-              model,
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      inlineData: {
-                        mimeType,
-                        data: base64Data,
-                      },
-                    },
-                    {
-                      text: 'Extrae con exactitud y máxima fidelidad todos los datos de este remito en papel manuscrito y devuélvelos estructurados en JSON.',
-                    },
-                  ],
-                },
-              ],
-              config: {
-                systemInstruction,
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    remitoPapel: { type: Type.STRING },
-                    fecha: { type: Type.STRING },
-                    cliente: { type: Type.STRING },
-                    ubicacion: { type: Type.STRING },
-                    puntoTrabajo: { type: Type.STRING },
-                    descripcion: { type: Type.STRING },
-                    horaEntrada: { type: Type.STRING },
-                    horaSalida: { type: Type.STRING },
-                    horasTrabajadas: { type: Type.NUMBER },
-                    kilometros: { type: Type.NUMBER },
-                    viajes: { type: Type.INTEGER },
-                    esGuardia: { type: Type.BOOLEAN },
-                    tecnicoLider: { type: Type.STRING },
-                    cuadrilla: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          nombre: { type: Type.STRING },
-                          rol: { type: Type.STRING, description: 'Oficial o Ayudante' },
-                        },
-                        required: ['nombre'],
-                      },
-                    },
-                    materiales: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          descripcion: { type: Type.STRING },
-                          cantidad: { type: Type.NUMBER },
-                        },
-                        required: ['descripcion'],
-                      },
-                    },
-                    observaciones: { type: Type.STRING },
-                    confianzaLectura: { type: Type.INTEGER },
-                  },
-                  required: ['cliente', 'descripcion'],
-                },
-              },
-            });
-
-            if (response?.text) {
-              console.log(`[Gemini OCR] Model ${model} succeeded!`);
-              break;
-            }
-          } catch (mErr: any) {
-            const errStr = mErr?.message || String(mErr);
-            console.warn(`[Gemini OCR] Model ${model} attempt ${attempt} failed:`, errStr.slice(0, 150));
-            lastError = mErr;
-            // Wait briefly before retrying
-            await new Promise(r => setTimeout(r, 600));
-          }
-        }
-        if (response?.text) {
-          break;
-        }
-      }
-
-      if (!response?.text) {
-        let cleanMsg = 'El servicio de IA se encuentra momentáneamente saturado. Por favor, reintenta en unos segundos.';
-        try {
-          if (lastError?.message) {
-            const parsed = JSON.parse(lastError.message);
-            if (parsed?.error?.message) {
-              cleanMsg = parsed.error.message;
-            }
-          }
-        } catch {
-          if (typeof lastError?.message === 'string') {
-            cleanMsg = lastError.message;
-          }
-        }
-        return res.status(503).json({
-          success: false,
-          error: cleanMsg
-        });
-      }
-
-      const rawJson = response.text || '{}';
-      const parsedData = JSON.parse(rawJson);
-
-      return res.json({
-        success: true,
-        data: parsedData,
+      const base64 = image.replace(/^data:[a-zA-Z0-9.-]+\/[a-zA-Z0-9.+]+;base64,/, '');
+      const raw = await scanRemitoImage(ai, {
+        base64,
+        mimeType,
+        knownClients: Array.isArray(knownClients) ? knownClients.slice(0, 60).map(String) : [],
+        knownWorkers: Array.isArray(knownWorkers) ? knownWorkers.slice(0, 60).map(String) : []
       });
+      // La respuesta de la IA no es de fiar: se validan los campos antes de devolverlos.
+      return res.json({ success: true, data: sanitizeExtraction(raw) });
     } catch (err: any) {
+      if (err instanceof OcrError) {
+        return res.status(err.status).json({ success: false, error: err.message });
+      }
       console.error('[API Scan Remito Error]:', err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || 'Error al procesar el remito con IA.',
-      });
+      return res.status(500).json({ success: false, error: 'Error al procesar el remito con IA.' });
     }
   });
 
@@ -207,6 +219,7 @@ Criterios de extracción:
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
+      mode: process.env.DEMO_MODE === '1' ? 'demo' : undefined,
     });
     app.use(vite.middlewares);
   } else {
