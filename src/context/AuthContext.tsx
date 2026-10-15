@@ -1,17 +1,35 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { UserProfile, UserRole, RolePermissions } from '../types';
 import { INITIAL_USERS } from '../data/initialData';
 import { getEffectivePermissions, DEFAULT_ROLE_PERMISSIONS } from '../utils/permissionUtils';
 import { isAuthorizedWorkerOrStaff, normalizeWorkerName } from '../utils/calculationUtils';
 import {
   subscribeUsers,
+  subscribeOwnUser,
+  fetchOwnRoleInfo,
   saveUserToFirestore,
+  saveUserRoleToFirestore,
   saveWorkerToFirestore,
   saveUsersBatchToFirestore,
   deleteUserFromFirestore,
   subscribeDeletedUsers,
   unmarkUserAsDeletedInFirestore
 } from '../services/firestoreSync';
+import {
+  createManagedAccount,
+  resetManagedPassword,
+  setManagedAccountDisabled,
+  deleteManagedAccount,
+  changeOwnPassword
+} from '../services/adminUsersApi';
+import {
+  FirebaseUser,
+  sendPasswordReset,
+  signInWithEmail,
+  signOutUser,
+  subscribeAuthState
+} from '../services/authService';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
 
 export interface FirebaseConnectionConfig {
   apiKey: string;
@@ -29,13 +47,27 @@ interface AuthContextType {
   isAuthenticated: boolean;
   users: UserProfile[];
   availableUsers: UserProfile[];
-  loginAsUser: (user: UserProfile) => void;
-  loginWithCredentials: (identifier: string, password: string) => { success: boolean; message?: string };
-  loginWithEmail: (email: string) => boolean;
+  /** true mientras Firebase Auth restaura la sesión al abrir la app. */
+  authLoading: boolean;
+  /** Mensaje si la cuenta de Firebase Auth no tiene un perfil asociado. */
+  authError: string | null;
+  /** La cuenta entró con una clave temporal: debe elegir una propia antes de usar el sistema. */
+  mustChangePassword: boolean;
+  /** Cambia la clave temporal por una propia y vuelve a iniciar sesión con ella. */
+  completePasswordChange: (newPassword: string) => Promise<{ success: boolean; message?: string }>;
+  /** Genera una clave temporal nueva para otro usuario (la ve solo quien la pide). */
+  resetUserPassword: (uid: string) => Promise<{ success: boolean; message?: string; temporaryPassword?: string }>;
+  loginWithCredentials: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
+  sendPasswordResetEmail: (email: string) => Promise<{ success: boolean; message?: string }>;
   
   // User Management CRUD
   createUser: (userData: Omit<UserProfile, 'uid'> & { uid?: string }) => UserProfile;
+  /** Crea cuenta de acceso (Firebase Auth) + perfil + rol. Devuelve la contraseña temporal generada. */
+  createUserAccount: (
+    userData: Omit<UserProfile, 'uid' | 'authUid'> & { uid?: string },
+    password?: string
+  ) => Promise<{ success: boolean; message?: string; temporaryPassword?: string }>;
   updateUser: (uid: string, updates: Partial<UserProfile>) => void;
   deleteUser: (uid: string) => Promise<{ success: boolean; message?: string }> | { success: boolean; message?: string };
   changeUserRole: (uid: string, newRole: UserRole) => void;
@@ -76,19 +108,18 @@ interface AuthContextType {
 }
 
 const DEFAULT_FIREBASE_CONFIG: FirebaseConnectionConfig = {
-  apiKey: 'AIzaSyAmrAVy1sB0nw2xm-S3AfRc6uADfCEkFCU',
-  authDomain: 'future-apricot-m8chg.firebaseapp.com',
-  projectId: 'future-apricot-m8chg',
-  storageBucket: 'future-apricot-m8chg.firebasestorage.app',
-  messagingSenderId: '192820061976',
-  appId: '1:192820061976:web:3be214e8b3b11dbefda06d',
+  apiKey: firebaseAppletConfig.apiKey,
+  authDomain: firebaseAppletConfig.authDomain,
+  projectId: firebaseAppletConfig.projectId,
+  storageBucket: firebaseAppletConfig.storageBucket,
+  messagingSenderId: firebaseAppletConfig.messagingSenderId,
+  appId: firebaseAppletConfig.appId,
   connected: true,
-  statusMessage: 'Conectado a Firebase Firestore en la Nube (future-apricot-m8chg)'
+  statusMessage: `Conectado a Firebase Firestore en la Nube (${firebaseAppletConfig.projectId})`
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const AUTH_STORAGE_KEY = 'job_martin_bandiera_auth_user_v4';
 const USERS_STORAGE_KEY = 'job_martin_bandiera_users_list_v4';
 const FIREBASE_CONFIG_KEY = 'job_martin_bandiera_firebase_config';
 export const DELETED_USERS_STORAGE_KEY = 'job_martin_bandiera_deleted_users_v1';
@@ -274,7 +305,6 @@ function loadAllPersistedUsers(): UserProfile[] {
                   ...u,
                   uid: uid,
                   email: email || prev?.email || '',
-                  password: (u.password && u.password.trim()) || (prev?.password) || '123456',
                   active: u.active !== undefined ? u.active : true
                 });
               }
@@ -307,8 +337,6 @@ function loadAllPersistedUsers(): UserProfile[] {
       role: 'SuperAdmin',
       category: 'Administrativo',
       isAdministrative: true,
-      password: existingAdmin?.password || 'admin',
-      tenantId: existingAdmin?.tenantId || 'tenant_bandiera_hq',
       companyName: 'JOB Martin Bandiera S.A.',
       phone: '+54 9 2622 50-5195',
       specialty: 'Dirección General & Consultoría de Obras',
@@ -324,63 +352,48 @@ function loadAllPersistedUsers(): UserProfile[] {
   return list;
 }
 
+// Copias locales de los datos del sistema (remitos, personal con tarifas, finanzas, etc.).
+// Se borran al cerrar sesión y antes de abrir la sesión de un capataz, para que nunca queden en el dispositivo.
+const DATA_CACHE_PREFIX = 'job_martin_bandiera_master_dataset_v1';
+const clearLocalDataCaches = () => {
+  try {
+    Object.keys(localStorage)
+      .filter(k => k.startsWith(DATA_CACHE_PREFIX))
+      .forEach(k => localStorage.removeItem(k));
+  } catch {
+    // ignore
+  }
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   // 1. Users List (loaded from all versions & merged)
   const [users, setUsers] = useState<UserProfile[]>(() => {
     return loadAllPersistedUsers();
   });
 
-  // 2. Current User & Authentication Status
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      if (localStorage.getItem('bandiera_logged_out') === 'true') {
-        return null;
-      }
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.uid) {
-          if ((parsed.email || '').toLowerCase().trim() === 'admin@admin.com') {
-            return {
-              ...parsed,
-              displayName: 'Juan Pablo',
-              role: 'SuperAdmin',
-              isAdministrative: true,
-              category: 'Administrativo',
-              password: 'admin'
-            };
-          }
-          if (parsed.role === 'SuperAdmin') {
-            return {
-              ...parsed,
-              role: 'SuperAdmin',
-              active: true
-            };
-          }
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return INITIAL_USERS[0];
-  });
+  // 2. Current User & Authentication Status.
+  // La sesión la maneja Firebase Auth; nunca se restaura desde localStorage.
+  const [fbUser, setFbUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState<boolean>(false);
+  const [sessionReload, setSessionReload] = useState<number>(0);
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const isAuthenticated = currentUser !== null;
+  const fbUserRef = useRef<FirebaseUser | null>(null);
 
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      if (localStorage.getItem('bandiera_logged_out') === 'true') {
-        return false;
+  useEffect(() => {
+    return subscribeAuthState(user => {
+      fbUserRef.current = user;
+      setFbUser(user);
+      if (!user) {
+        setCurrentUser(null);
+        setAuthError(null);
+        setMustChangePassword(false);
       }
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.uid) return true;
-      }
-    } catch {
-      // ignore
-    }
-    return true;
-  });
+      setAuthLoading(false);
+    });
+  }, []);
 
   // 3. Firebase Config
   const [firebaseConfig, setFirebaseConfig] = useState<FirebaseConnectionConfig>(() => {
@@ -395,8 +408,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return DEFAULT_FIREBASE_CONFIG;
   });
 
-  // 4. Real-time Firestore Users Subscription
+  // 4. Real-time Firestore Users Subscription (solo con sesión iniciada: las reglas exigen autenticación)
   useEffect(() => {
+    if (!fbUser) return;
     let isMounted = true;
 
     // A. Keep deleted users tombstone synchronized in real-time
@@ -434,8 +448,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // B. Real-time subscription to Firestore users collection
-    const unsubscribeUsers = subscribeUsers(remoteUsers => {
+    // B. Real-time subscription to Firestore users collection.
+    // Un capataz solo puede leer su propio perfil (reglas de Firestore), así que no pide la lista completa.
+    let unsubscribeUsers: () => void = () => {};
+    let ownProfileOnly = false;
+    const handleRemoteUsers = (remoteUsers: UserProfile[]) => {
       if (!isMounted) return;
       const { uids: deletedUids, emails: deletedEmails, names: deletedNames } = getDeletedUsersTombstone();
 
@@ -465,7 +482,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
-      // Always guarantee root SuperAdmin Juan Pablo is present
+      // Always guarantee root SuperAdmin Juan Pablo is present (no en la sesión de un capataz)
+      if (!ownProfileOnly) {
       const adminSuper = validUsersMap.get('usr_super_01') || INITIAL_USERS[0];
       validUsersMap.set('usr_super_01', {
         ...adminSuper,
@@ -475,14 +493,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: 'SuperAdmin',
         category: 'Administrativo',
         isAdministrative: true,
-        password: adminSuper.password || 'admin',
-        tenantId: adminSuper.tenantId || 'tenant_bandiera_hq',
         companyName: 'JOB Martin Bandiera S.A.',
         phone: '+54 9 2622 50-5195',
         specialty: 'Dirección General & Consultoría de Obras',
         cuadrilla: 'Dirección Ejecutiva',
         active: true
       });
+      }
 
       const validUsers = Array.from(validUsersMap.values());
 
@@ -491,24 +508,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(validUsers));
       } catch {}
 
-      // Update active session user if matched
-      setCurrentUser(prev => {
-        if (!prev) return INITIAL_USERS[0];
-        const prevEmail = (prev.email || '').toLowerCase().trim();
-        if (deletedUids.has(prev.uid) || (prevEmail && deletedEmails.has(prevEmail))) {
-          return INITIAL_USERS[0];
-        }
+      // Resolver el perfil de la cuenta autenticada (por authUid o por correo)
+      const authed = fbUserRef.current;
+      if (authed) {
+        const authedEmail = (authed.email || '').toLowerCase().trim();
         const matched = validUsers.find(
-          u => u.uid === prev.uid || (u.email && u.email.toLowerCase() === prevEmail)
+          u => u.authUid === authed.uid || (u.email && u.email.toLowerCase().trim() === authedEmail)
         );
-        if (matched) {
-          try {
-            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(matched));
-          } catch {}
-          return matched;
+        if (matched && matched.active !== false) {
+          setCurrentUser(matched);
+          setAuthError(null);
+        } else if (remoteUsers && remoteUsers.length > 0) {
+          setCurrentUser(null);
+          setAuthError(
+            matched
+              ? 'Este usuario se encuentra inactivo. Solicite su activación a un Administrador.'
+              : 'Su cuenta de acceso no tiene un perfil asociado. Solicite a un Administrador que lo cree.'
+          );
         }
-        return prev;
-      });
+      }
+    };
+
+    fetchOwnRoleInfo(fbUser.uid).then(info => {
+      if (!isMounted) return;
+      // Clave temporal: las reglas no dejan leer nada hasta que el usuario elija la suya.
+      setMustChangePassword(info.mustChangePassword);
+      if (info.mustChangePassword) return;
+      const role = info.role;
+      ownProfileOnly = role === 'Capataz';
+      if (ownProfileOnly) clearLocalDataCaches();
+      unsubscribeUsers = ownProfileOnly
+        ? subscribeOwnUser(fbUser.uid, handleRemoteUsers)
+        : subscribeUsers(handleRemoteUsers);
     });
 
     return () => {
@@ -516,7 +547,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubscribeDeleted();
       unsubscribeUsers();
     };
-  }, []);
+  }, [fbUser, sessionReload]);
 
   // Persist Users locally whenever they change
   useEffect(() => {
@@ -526,19 +557,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // ignore
     }
   }, [users]);
-
-  // Persist Current User
-  useEffect(() => {
-    try {
-      if (currentUser && isAuthenticated) {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(currentUser));
-      } else {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
-      }
-    } catch {
-      // ignore
-    }
-  }, [currentUser, isAuthenticated]);
 
   // Persist Firebase Config
   useEffect(() => {
@@ -550,184 +568,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [firebaseConfig]);
 
   // Actions
-  const loginAsUser = (user: UserProfile) => {
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
-  };
-
-  const loginWithCredentials = (
+  const loginWithCredentials = async (
     identifier: string,
     password: string
-  ): { success: boolean; message?: string } => {
-    const cleanId = (identifier || '').trim().toLowerCase();
-    const cleanPass = (password || '').trim();
-
-    if (!cleanId) {
-      return { success: false, message: 'Por favor, ingrese usuario o correo electrónico.' };
+  ): Promise<{ success: boolean; message?: string }> => {
+    if (!(identifier || '').trim()) {
+      return { success: false, message: 'Por favor, ingrese su correo electrónico.' };
     }
-    if (!cleanPass) {
-      return { success: false, message: 'Por favor, ingrese su clave de acceso.' };
+    if (!password) {
+      return { success: false, message: 'Por favor, ingrese su contraseña.' };
     }
-
-    // Handle known user aliases so users can log in with their personal or company email
-    const aliasMap: Record<string, string[]> = {
-      'gastonvillalobos2019@gmail.com': ['gaston@bandiera.com', 'cgv@bandiera.com', 'gaston', 'gaston villalobos'],
-      'gaston@bandiera.com': ['gastonvillalobos2019@gmail.com', 'cgv@bandiera.com', 'gaston'],
-      'rominabromeo@yahoo.com.ar': ['romina@bandiera.com', 'romina'],
-      'romina@bandiera.com': ['rominabromeo@yahoo.com.ar', 'romina'],
-      'martin@iipsa.com.ar': ['admin@bandiera.com', 'mbb@bandiera.com', 'martin bandiera', 'martin'],
-      'admin@bandiera.com': ['martin@iipsa.com.ar', 'mbb@bandiera.com', 'martin bandiera', 'martin'],
-      'admin@admin.com': ['juan pablo', 'superadmin', 'admin']
-    };
-    const searchKeys = [cleanId, ...(aliasMap[cleanId] || [])];
-
-    // Search across real-time Firestore loaded users first, then fallback to persisted
-    const searchPool = users.length > 0 ? users : loadAllPersistedUsers();
-
-    // Match by exact email, email prefix (before @), display name, or normalized name
-    let found = searchPool.find(u => {
-      const uEmail = (u.email || '').toLowerCase().trim();
-      const uName = (u.displayName || '').toLowerCase().trim();
-      const emailPrefix = uEmail.split('@')[0];
-      const nameNoSpace = uName.replace(/\s+/g, '');
-
-      return searchKeys.some(key => {
-        const keyNoSpace = key.replace(/\s+/g, '');
-        return (
-          uEmail === key ||
-          emailPrefix === key ||
-          uName === key ||
-          nameNoSpace === keyNoSpace ||
-          uName.includes(key)
-        );
-      });
-    });
-
-    // Fallback across all INITIAL_USERS if not in current list, ONLY IF NOT DELETED
-    if (!found) {
-      const { uids: deletedUids, emails: deletedEmails } = getDeletedUsersTombstone();
-      found = INITIAL_USERS.find(u => {
-        const uEmail = (u.email || '').toLowerCase().trim();
-        if (deletedUids.has(u.uid) || deletedEmails.has(uEmail)) return false;
-
-        const uName = (u.displayName || '').toLowerCase().trim();
-        const emailPrefix = uEmail.split('@')[0];
-        const nameNoSpace = uName.replace(/\s+/g, '');
-
-        return searchKeys.some(key => {
-          const keyNoSpace = key.replace(/\s+/g, '');
-          return (
-            uEmail === key ||
-            emailPrefix === key ||
-            uName === key ||
-            nameNoSpace === keyNoSpace ||
-            uName.includes(key)
-          );
-        });
-      });
-      if (found) {
-        saveUserToFirestore(found).catch(() => {});
-        setUsers(prev => [found!, ...prev.filter(u => u.email.toLowerCase() !== found!.email.toLowerCase())]);
-      }
-    }
-
-    if (!found) {
-      return {
-        success: false,
-        message: `El usuario o correo "${identifier}" no se encuentra registrado en la base de datos. Pida al Administrador que cree su cuenta con los permisos correspondientes.`
-      };
-    }
-
-    if (found.active === false) {
-      return {
-        success: false,
-        message: 'Este usuario se encuentra inactivo. Solicite su activación a un Administrador.'
-      };
-    }
-
-    // Passwords accepted:
-    // 1. Explicit user password (case-sensitive or trimmed)
-    // 2. Global demo & recovery keys ('123456', 'bandiera2026', 'admin123', 'admin', 'bandiera')
-    // 3. User role name (e.g. 'superadmin', 'capataz', 'empleado')
-    const storedPass = (found.password || '123456').trim();
-    const isMasterDemoPassword = ['123456', 'bandiera2026', 'admin123', 'admin', 'bandiera'].includes(cleanPass);
-    const isRolePassword = cleanPass.toLowerCase() === found.role.toLowerCase();
-    const isExactMatch = cleanPass === storedPass || cleanPass.toLowerCase() === storedPass.toLowerCase();
-
-    if (!isExactMatch && !isMasterDemoPassword && !isRolePassword) {
-      return {
-        success: false,
-        message: 'Contraseña incorrecta. Verifique la clave que le fue provista o intente con 123456.'
-      };
-    }
-
-    // Login successful
-    setCurrentUser(found);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(found));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
-
-    return { success: true };
-  };
-
-  const loginWithEmail = (email: string): boolean => {
-    const freshUsers = loadAllPersistedUsers();
-    const clean = (email || '').trim().toLowerCase();
-    const found = freshUsers.find(u => u.email.toLowerCase().trim() === clean);
-    if (found) {
-      setCurrentUser(found);
-      setIsAuthenticated(true);
-      try {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(found));
-        localStorage.removeItem('bandiera_logged_out');
-      } catch {}
-      return true;
-    }
-    // Create new profile if not found
-    const newProfile: UserProfile = {
-      uid: `usr_${Date.now()}`,
-      email: clean,
-      displayName: clean.split('@')[0],
-      role: 'Empleado',
-      password: '123456',
-      tenantId: 'tenant_bandiera_hq',
-      companyName: 'JOB Martin Bandiera S.A.',
-      active: true,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    const updated = [...freshUsers, newProfile];
-    setUsers(updated);
-    setCurrentUser(newProfile);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newProfile));
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(updated));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
-    return true;
+    setAuthError(null);
+    // El perfil y los permisos se resuelven al recibir la sesión (ver suscripción de usuarios).
+    return signInWithEmail(identifier, password);
   };
 
   const logout = () => {
     setCurrentUser(null);
-    setIsAuthenticated(false);
+    setAuthError(null);
+    signOutUser().catch(() => {});
     try {
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-      sessionStorage.removeItem(AUTH_STORAGE_KEY);
-      localStorage.setItem('bandiera_logged_out', 'true');
+      // No dejar datos de personal en el navegador al cerrar sesión
+      localStorage.removeItem(USERS_STORAGE_KEY);
+      ALL_STORAGE_KEYS.forEach(k => localStorage.removeItem(k));
+      clearLocalDataCaches();
+      sessionStorage.removeItem(USERS_STORAGE_KEY);
     } catch {
       // ignore
     }
   };
 
+  const sendPasswordResetEmail = (email: string) => sendPasswordReset(email);
+
   const createUser = (userData: Omit<UserProfile, 'uid'> & { uid?: string }): UserProfile => {
     const cleanEmail = (userData.email || '').trim().toLowerCase();
-    const cleanPassword = (userData.password && userData.password.trim()) || '123456';
     const cleanName = (userData.displayName || cleanEmail.split('@')[0] || 'Usuario').trim();
     const norm = normalizeWorkerName(cleanName);
 
@@ -760,9 +634,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       uid: newUid,
       email: cleanEmail,
       displayName: cleanName,
-      password: cleanPassword,
+      password: undefined,
       role: userData.role || 'Empleado',
-      tenantId: userData.tenantId || 'tenant_bandiera_hq',
       companyName: userData.companyName || 'JOB Martin Bandiera S.A.',
       active: userData.active !== undefined ? userData.active : true,
       createdAt: userData.createdAt || new Date().toISOString().split('T')[0],
@@ -816,6 +689,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return newUser;
   };
 
+  const createUserAccount = async (
+    userData: Omit<UserProfile, 'uid' | 'authUid'> & { uid?: string },
+    password?: string
+  ): Promise<{ success: boolean; message?: string; temporaryPassword?: string }> => {
+    const cleanEmail = (userData.email || '').trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Ingrese un correo electrónico válido.' };
+    }
+    // La cuenta se crea en el servidor con una clave temporal que el usuario debe cambiar al ingresar.
+    const account = await createManagedAccount({
+      email: cleanEmail,
+      displayName: userData.displayName,
+      role: userData.role || 'Empleado',
+      active: userData.active !== false
+    });
+    if ('message' in account) {
+      return { success: false, message: account.message };
+    }
+
+    // Perfil de usuario (sin contraseña) + vínculo con la cuenta de acceso
+    createUser({ ...userData, email: cleanEmail, authUid: account.authUid });
+
+    return { success: true, temporaryPassword: account.temporaryPassword };
+  };
+
+  const resetUserPassword = async (
+    uid: string
+  ): Promise<{ success: boolean; message?: string; temporaryPassword?: string }> => {
+    const target = users.find(u => u.uid === uid);
+    if (!target?.authUid) {
+      return { success: false, message: 'Este usuario todavía no tiene una cuenta de acceso vinculada.' };
+    }
+    const res = await resetManagedPassword(target.authUid);
+    return 'message' in res ? { success: false, message: res.message } : { success: true, temporaryPassword: res.temporaryPassword };
+  };
+
+  const completePasswordChange = async (newPassword: string): Promise<{ success: boolean; message?: string }> => {
+    const email = fbUserRef.current?.email;
+    const res = await changeOwnPassword(newPassword);
+    if ('message' in res) return { success: false, message: res.message };
+    // El servidor cierra las sesiones abiertas al cambiar la clave: se vuelve a entrar con la nueva.
+    const login = email ? await signInWithEmail(email, newPassword) : { success: false, message: 'Sesión no disponible.' };
+    if (!login.success) {
+      return { success: false, message: 'La clave se cambió. Ingrese de nuevo con la clave nueva.' };
+    }
+    setMustChangePassword(false);
+    setSessionReload(n => n + 1);
+    return { success: true };
+  };
+
   const updateUser = (uid: string, updates: Partial<UserProfile>) => {
     // Find target and persist to Firestore
     const cleanUpdateEmail = (updates.email || '').toLowerCase().trim();
@@ -830,12 +753,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...updates
       };
       if (updates.email) mergedUser.email = updates.email.trim().toLowerCase();
-      if (updates.password !== undefined) {
-        mergedUser.password = updates.password.trim() || '123456';
-      }
+      delete mergedUser.password;
       saveUserToFirestore(mergedUser).catch(err => {
         console.warn('Could not update user in Firestore immediately:', err);
       });
+
+      // Mantener sincronizado el rol que usan las reglas de Firestore
+      if (mergedUser.authUid && (updates.role !== undefined || updates.active !== undefined)) {
+        saveUserRoleToFirestore(mergedUser.authUid, {
+          role: mergedUser.role,
+          email: mergedUser.email,
+          active: mergedUser.active !== false
+        }).catch(() => {});
+      }
+      // Habilitar o deshabilitar también la cuenta de acceso en Firebase Auth (servidor)
+      if (mergedUser.authUid && updates.active !== undefined && updates.active !== existing.active) {
+        setManagedAccountDisabled(mergedUser.authUid, mergedUser.active === false).catch(() => {});
+      }
 
       // Synchronize with worker document in Firestore to keep database 100% in sync
       const workerSyncPayload = {
@@ -867,14 +801,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           matched = true;
           const updated = { ...u, ...updates };
           if (updates.email) updated.email = updates.email.trim().toLowerCase();
-          if (updates.password !== undefined) {
-            updated.password = updates.password.trim() || '123456';
-          }
+          delete updated.password;
           if (currentUser && (currentUser.uid === u.uid || currentUser.email.toLowerCase() === u.email.toLowerCase())) {
             setCurrentUser(updated);
-            try {
-              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(updated));
-            } catch {}
           }
           return updated;
         }
@@ -885,7 +814,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const newlyMerged: UserProfile = {
           ...existing,
           ...updates,
-          password: updates.password !== undefined ? (updates.password.trim() || '123456') : (existing.password || '123456')
+          password: undefined
         };
         updatedList.push(newlyMerged);
       }
@@ -921,6 +850,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const otherSuperAdmins = users.filter(u => u.role === 'SuperAdmin' && u.uid !== uid && u.active !== false);
       if (otherSuperAdmins.length === 0) {
         return { success: false, message: 'No puede eliminar su propia sesión de Super Administrador activa sin otro Super Administrador habilitado.' };
+      }
+    }
+
+    // 0. Baja de la cuenta de acceso en Firebase Auth (servidor). Si el servidor no responde,
+    //    al menos se revoca el acceso: las reglas de Firestore bloquean a las cuentas con rol inactivo.
+    if (targetUser?.authUid) {
+      const removed = await deleteManagedAccount(targetUser.authUid);
+      if ('message' in removed) {
+        await saveUserRoleToFirestore(targetUser.authUid, {
+          role: targetUser.role,
+          email: cleanEmail,
+          active: false
+        });
       }
     }
 
@@ -972,13 +914,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const resetUsersToDefaults = () => {
     try {
       localStorage.removeItem(DELETED_USERS_STORAGE_KEY);
-      localStorage.removeItem(AUTH_STORAGE_KEY);
     } catch {}
     setUsers(INITIAL_USERS);
-    setCurrentUser(INITIAL_USERS[0]);
-    setIsAuthenticated(true);
     try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(INITIAL_USERS[0]));
       localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(INITIAL_USERS));
     } catch {}
     saveUsersBatchToFirestore(INITIAL_USERS).catch(() => {});
@@ -1001,11 +939,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Role Checks
   const role = currentUser?.role;
 
-  const isSuperAdmin = Boolean(
-    currentUser &&
-      (role === 'SuperAdmin' ||
-        ['admin@bandiera.com', 'admin@admin.com', 'valenkoreinmolina@gmail.com'].includes((currentUser.email || '').toLowerCase().trim()))
-  );
+  const isSuperAdmin = Boolean(currentUser && role === 'SuperAdmin');
 
   const isOwner = role === 'Owner';
   const isGerente = role === 'Gerente';
@@ -1025,11 +959,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isAuthenticated,
         users,
         availableUsers: users,
-        loginAsUser,
+        authLoading: authLoading || (fbUser !== null && currentUser === null && !authError),
+        authError,
+        mustChangePassword,
+        completePasswordChange,
+        resetUserPassword,
         loginWithCredentials,
-        loginWithEmail,
         logout,
+        sendPasswordResetEmail,
         createUser,
+        createUserAccount,
         updateUser,
         deleteUser,
         changeUserRole,

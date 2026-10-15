@@ -749,7 +749,11 @@ export const exportRemitosToExcel = (
         row['Pago Técnico ($)'] = r.techPay;
       }
       if (visibleColumnKeys.includes('estado')) {
-        row['Estado'] = r.status;
+        // Un remito archivado figura como "Archivado" (internamente sigue "Cobrado")
+        row['Estado'] = r.archivado ? 'Archivado' : r.status;
+      }
+      if (visibleColumnKeys.includes('fecha_archivo')) {
+        row['Fecha de Archivo'] = r.fechaArchivado || '';
       }
 
       return row;
@@ -757,7 +761,8 @@ export const exportRemitosToExcel = (
 
     // Default fallback: all columns
     return {
-      'Estado': r.status,
+      'Estado': r.archivado ? 'Archivado' : r.status,
+      'Fecha de Archivo': r.fechaArchivado || '',
       'Semáforo': (r.semaforo || 'neutro').toUpperCase(),
       'Nº Remito': r.remitoId,
       'Remito Papel': r.remitoPapel || '',

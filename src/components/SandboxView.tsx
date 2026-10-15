@@ -31,9 +31,12 @@ import { SandboxRemitoOcr } from './SandboxRemitoOcr';
 
 const SANDBOX_STORAGE_KEY = 'job_martin_bandiera_sandbox_records_v1';
 
+/** Remito de prueba. Cuando se pasa a producción queda marcado para que no se pueda pasar dos veces. */
+type SandboxRecord = TechnicalAuditRecord & { promotedTo?: string; promotedAt?: string };
+
 export const SandboxView: React.FC = () => {
-  const { technicalParameters, workers, clients, addTechnicalAuditRecord } = useData();
-  const { currentUser, users } = useAuth();
+  const { technicalParameters, workers, clients, technicalAuditRecords, addTechnicalAuditRecord } = useData();
+  const { currentUser, users, permissions } = useAuth();
 
   const [activeSubTab, setActiveSubTab] = useState<'escaner_ia' | 'simulador' | 'remitos'>('escaner_ia');
 
@@ -79,7 +82,7 @@ export const SandboxView: React.FC = () => {
     : 0;
 
   // --- STATE FOR SANDBOX TEST RECORDS (ISOLATED) ---
-  const [sandboxRecords, setSandboxRecords] = useState<TechnicalAuditRecord[]>(() => {
+  const [sandboxRecords, setSandboxRecords] = useState<SandboxRecord[]>(() => {
     try {
       const stored = localStorage.getItem(SANDBOX_STORAGE_KEY);
       if (stored) {
@@ -252,15 +255,69 @@ export const SandboxView: React.FC = () => {
     showNotification(`¡Remito de prueba ${newRecord.remitoId} guardado con éxito en el Sandbox!`);
   };
 
-  // Promote test record to Production
-  const handlePromoteToProduction = (record: TechnicalAuditRecord) => {
-    // Convert to actual production record
+  // Pasar un remito de prueba a producción: siempre con confirmación, con un cliente real de la base
+  // y con el número siguiente de la secuencia real (nunca el número de prueba).
+  const [promoting, setPromoting] = useState<SandboxRecord | null>(null);
+  const [promoteClient, setPromoteClient] = useState<string>('');
+
+  const nextProductionRemitoId = (): string => {
+    const max = technicalAuditRecords.reduce((acc, r) => {
+      const m = r.remitoId.match(/#?(\d+)-2026/);
+      return m ? Math.max(acc, parseInt(m[1], 10)) : acc;
+    }, 379);
+    return `#${max + 1}-2026`;
+  };
+
+  const handleOpenPromote = (record: SandboxRecord) => {
+    if (record.promotedTo) return;
+    const match = clients.find(c => c.razonSocial.trim().toLowerCase() === record.clientName.trim().toLowerCase());
+    setPromoteClient(match?.razonSocial || '');
+    setPromoting(record);
+  };
+
+  const handleConfirmPromote = () => {
+    const record = promoting;
+    const client = clients.find(c => c.razonSocial === promoteClient);
+    if (!record || !client || record.promotedTo) return;
+    const remitoId = nextProductionRemitoId();
+    // Se arma un remito limpio: sin ids de prueba, y con el precio recalculado con las tarifas vigentes.
     addTechnicalAuditRecord({
-      ...record,
-      remitoId: record.remitoId.replace('TEST-', ''),
-      description: `[Verificado en Sandbox] ${record.description}`
-    });
-    showNotification(`El remito ${record.remitoId} fue promovido a PRODUCCIÓN con éxito.`);
+      remitoId,
+      remitoPapel: record.remitoPapel,
+      date: record.date,
+      clientName: client.razonSocial,
+      siteLocation: record.siteLocation || client.fincaLocacion,
+      workPoint: record.workPoint,
+      isGuardia: record.isGuardia,
+      guardiaType: record.guardiaType,
+      hoursWorked: record.hoursWorked,
+      travelHours: record.travelHours,
+      viajes: record.viajes,
+      distanceKm: record.distanceKm,
+      horaEntrada: record.horaEntrada,
+      horaSalida: record.horaSalida,
+      materialsCost: record.materialsCost,
+      materialsDetails: record.materialsDetails,
+      description: record.description,
+      leadTech: record.leadTech,
+      helpers: record.helpers,
+      teamMembers: record.teamMembers,
+      logisticsCost: 0,
+      laborDirectCost: 0,
+      operatingCost: 0,
+      suggestedPrice: 0,
+      billedPrice: 0,
+      collectedPrice: 0,
+      helperPay: 0,
+      techPay: 0,
+      status: 'Cargado',
+      semaforo: 'rojo'
+    } as any);
+    setSandboxRecords(prev =>
+      prev.map(r => (r.id === record.id ? { ...r, promotedTo: remitoId, promotedAt: new Date().toISOString() } : r))
+    );
+    setPromoting(null);
+    showNotification(`El remito de prueba ${record.remitoId} se cargó en producción como ${remitoId}.`);
   };
 
   // Delete record from Sandbox
@@ -285,6 +342,61 @@ export const SandboxView: React.FC = () => {
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-2xl shadow-2xl border border-amber-500/50 flex items-center gap-3 animate-in slide-in-from-bottom-3 text-xs font-bold">
           <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{notification}</span>
+        </div>
+      )}
+
+      {/* CONFIRMAR PASO A PRODUCCIÓN */}
+      {promoting && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="promote-title">
+          <div className="w-full max-w-lg bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl space-y-4 text-xs">
+            <h2 id="promote-title" className="text-lg font-black text-slate-900 dark:text-white">Cargar en producción</h2>
+            <p className="text-slate-600 dark:text-slate-300">
+              Se creará un remito <strong>real</strong> en Auditoría Técnica con el número <strong className="font-mono">{nextProductionRemitoId()}</strong>.
+              Los costos y el precio se recalculan con las tarifas vigentes. Esta acción no se puede deshacer desde acá.
+            </p>
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 p-3 rounded-xl bg-slate-100 dark:bg-slate-800">
+              <dt className="text-slate-500">Fecha</dt><dd className="font-bold text-slate-900 dark:text-white">{promoting.date.split('-').reverse().join('/')}</dd>
+              <dt className="text-slate-500">Papel</dt><dd className="font-bold text-slate-900 dark:text-white">{promoting.remitoPapel || '—'}</dd>
+              <dt className="text-slate-500">Horas / km / viajes</dt><dd className="font-bold text-slate-900 dark:text-white">{promoting.hoursWorked} h · {promoting.distanceKm} km · {promoting.viajes ?? 1}</dd>
+              <dt className="text-slate-500">Responsable</dt><dd className="font-bold text-slate-900 dark:text-white">{promoting.leadTech}</dd>
+              <dt className="text-slate-500">Personal</dt><dd className="font-bold text-slate-900 dark:text-white">{(promoting.teamMembers || []).map(m => `${m.name} (${m.role})`).join(', ') || '—'}</dd>
+              <dt className="text-slate-500">Materiales</dt><dd className="font-bold text-slate-900 dark:text-white">{promoting.materialsDetails || 'Sin materiales detallados'}</dd>
+            </dl>
+            <div>
+              <label htmlFor="promote-client" className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Cliente real (obligatorio)
+              </label>
+              <select
+                id="promote-client"
+                value={promoteClient}
+                onChange={e => setPromoteClient(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+              >
+                <option value="">Elegir cliente de la base…</option>
+                {clients.map(c => (
+                  <option key={c.id} value={c.razonSocial}>{c.razonSocial}</option>
+                ))}
+              </select>
+              {!clients.some(c => c.razonSocial.trim().toLowerCase() === promoting.clientName.trim().toLowerCase()) && (
+                <p className="mt-1 text-amber-600 dark:text-amber-400 font-bold">
+                  El cliente "{promoting.clientName}" no existe en la base de clientes: elegí uno real.
+                </p>
+              )}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={() => setPromoting(null)} className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 font-black text-slate-700 dark:text-slate-200 cursor-pointer">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmPromote}
+                disabled={!promoteClient}
+                className="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white font-black cursor-pointer"
+              >
+                Confirmar y cargar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1023,15 +1135,22 @@ export const SandboxView: React.FC = () => {
 
                         <td className="py-3 px-3">
                           <div className="flex items-center justify-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handlePromoteToProduction(r)}
-                              className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase flex items-center gap-1 cursor-pointer"
-                              title="Promover este remito verificado a la base de datos de producción real"
-                            >
-                              <Send className="w-3 h-3" />
-                              <span>A Producción</span>
-                            </button>
+                            {r.promotedTo ? (
+                              <span className="px-2.5 py-1 rounded-lg bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-black text-[10px] uppercase flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>En producción {r.promotedTo}</span>
+                              </span>
+                            ) : permissions.createRemito ? (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPromote(r)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[10px] uppercase flex items-center gap-1 cursor-pointer"
+                                title="Cargar este remito en la base de datos real (pide confirmación)"
+                              >
+                                <Send className="w-3 h-3" />
+                                <span>A Producción</span>
+                              </button>
+                            ) : null}
 
                             <button
                               type="button"

@@ -1,10 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { LoginPage } from './components/LoginPage';
+import { SyncIndicator } from './components/SyncIndicator';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
+import { ChangePasswordPage } from './components/ChangePasswordPage';
+import { FieldApp } from './components/FieldApp';
+import { PartesCampoView } from './components/PartesCampoView';
+import { EstadoGeneralView } from './components/EstadoGeneralView';
 import { FacturadoView } from './components/FacturadoView';
 import { PasadoView } from './components/PasadoView';
 import { CobradoView } from './components/CobradoView';
@@ -238,6 +243,47 @@ const AppContent: React.FC = () => {
             ) : (
               <AccessDeniedNotice
                 moduleName="Dashboard Ejecutivo & Métricas de Empresa"
+                userRole={currentUser.role}
+                onReturn={() => setActiveTab(getFallbackTab())}
+              />
+            )
+          )}
+
+          {/* TAB: PARTES DE CAMPO (bandeja de lo que cargan los capataces) */}
+          {activeTab === 'partes' && (
+            permissions.manageAudits ? (
+              <PartesCampoView />
+            ) : (
+              <AccessDeniedNotice
+                moduleName="Partes de Campo"
+                userRole={currentUser.role}
+                onReturn={() => setActiveTab(getFallbackTab())}
+              />
+            )
+          )}
+
+          {/* TAB: SIMULADOR DE CANALES DE ENTRADA (solo demo) */}
+          {activeTab === 'canales' && ChannelsSimulator && (
+            permissions.manageAudits ? (
+              <Suspense fallback={null}>
+                <ChannelsSimulator onNavigate={handleNavigate} />
+              </Suspense>
+            ) : (
+              <AccessDeniedNotice
+                moduleName="Canales de Entrada"
+                userRole={currentUser.role}
+                onReturn={() => setActiveTab(getFallbackTab())}
+              />
+            )
+          )}
+
+          {/* TAB: PANEL DE ESTADO (resumen gráfico por etapa) */}
+          {activeTab === 'estado' && (
+            permissions.viewDashboard ? (
+              <EstadoGeneralView onNavigate={handleNavigate} />
+            ) : (
+              <AccessDeniedNotice
+                moduleName="Panel de Estado"
                 userRole={currentUser.role}
                 onReturn={() => setActiveTab(getFallbackTab())}
               />
@@ -540,14 +586,52 @@ const AppContent: React.FC = () => {
   );
 };
 
+const ChannelsSimulator = __DEMO__
+  ? React.lazy(() => import('./demo/ChannelsSimulator').then(m => ({ default: m.ChannelsSimulator })))
+  : null;
+
+// Solo existe en el modo demo; en producción __DEMO__ es false y este módulo no se incluye.
+const DemoBanner = __DEMO__
+  ? React.lazy(() => import('./demo/DemoBanner').then(m => ({ default: m.DemoBanner })))
+  : null;
+
+// Los datos solo se cargan con sesión iniciada: las reglas de Firestore exigen autenticación.
+const AuthGate: React.FC = () => {
+  const { authLoading, isAuthenticated, currentUser, mustChangePassword } = useAuth();
+
+  // Clave temporal: primero se elige una propia; hasta entonces no se carga ningún dato.
+  if (mustChangePassword) {
+    return <ChangePasswordPage />;
+  }
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 text-slate-400 text-sm">
+        Verificando sesión...
+      </div>
+    );
+  }
+  if (!isAuthenticated || !currentUser) {
+    return <LoginPage />;
+  }
+  return (
+    <DataProvider key={currentUser.uid}>
+      {currentUser.role === 'Capataz' ? <FieldApp /> : <AppContent />}
+      <SyncIndicator />
+    </DataProvider>
+  );
+};
+
 export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <DataProvider>
-          <AppContent />
-        </DataProvider>
+        <AuthGate />
       </AuthProvider>
+      {DemoBanner && (
+        <Suspense fallback={null}>
+          <DemoBanner />
+        </Suspense>
+      )}
     </ThemeProvider>
   );
 }

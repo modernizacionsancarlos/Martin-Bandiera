@@ -3,14 +3,15 @@ import {
   doc,
   getDocs,
   getDoc,
-  setDoc,
-  deleteDoc,
   onSnapshot,
   Unsubscribe,
-  writeBatch,
   arrayUnion,
-  arrayRemove
+  arrayRemove,
+  query,
+  where
 } from 'firebase/firestore';
+// Escrituras con seguimiento: informan al indicador "Guardado / pendiente / error" (ver syncStatus.ts).
+import { setDoc, deleteDoc, writeBatch } from './trackedWrites';
 import { db } from './firebase';
 import { normalizeWorkerName } from '../utils/calculationUtils';
 import {
@@ -25,7 +26,9 @@ import {
   ProjectItem,
   MaintenanceServiceItem,
   VehicleItem,
-  VehicleEventItem
+  VehicleEventItem,
+  FieldReport,
+  FieldCatalog
 } from '../types';
 
 export enum OperationType {
@@ -139,12 +142,33 @@ export function subscribeUsers(callback: (users: UserProfile[]) => void): Unsubs
   );
 }
 
+// Las contraseñas viven solo en Firebase Auth; nunca se guardan en los documentos de usuario.
+function stripSecrets(user: UserProfile): Omit<UserProfile, 'password'> {
+  const { password: _password, ...rest } = user;
+  return rest;
+}
+
 export async function saveUserToFirestore(user: UserProfile): Promise<void> {
   const userDocRef = doc(db, 'users', user.uid);
   try {
-    await setDoc(userDocRef, sanitizeForFirestore(user), { merge: true });
+    await setDoc(userDocRef, sanitizeForFirestore(stripSecrets(user)), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+  }
+}
+
+/**
+ * Rol de acceso por cuenta de Firebase Auth. Las reglas de Firestore leen este documento
+ * para decidir permisos, por eso solo un administrador puede escribirlo.
+ */
+export async function saveUserRoleToFirestore(
+  authUid: string,
+  data: { role: string; email: string; active: boolean }
+): Promise<void> {
+  try {
+    await setDoc(doc(db, 'userRoles', authUid), sanitizeForFirestore(data), { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `userRoles/${authUid}`);
   }
 }
 
@@ -156,7 +180,7 @@ export async function saveUsersBatchToFirestore(users: UserProfile[]): Promise<v
     const batch = writeBatch(db);
     chunk.forEach(u => {
       const ref = doc(db, 'users', u.uid);
-      batch.set(ref, sanitizeForFirestore(u), { merge: true });
+      batch.set(ref, sanitizeForFirestore(stripSecrets(u)), { merge: true });
     });
     try {
       await batch.commit();
@@ -1099,3 +1123,98 @@ export async function clearAllVehicleEventsInFirestore(): Promise<void> {
   }
 }
 
+
+
+// -------------------------------------------------------------
+// FIELD REPORTS (partes de campo cargados por capataces, sin valores)
+// -------------------------------------------------------------
+/** Con `authUid` solo pide los partes de esa cuenta: es la consulta que las reglas permiten a un capataz. */
+export function subscribeFieldReports(callback: (reports: FieldReport[]) => void, authUid?: string): Unsubscribe {
+  const col = collection(db, 'fieldReports');
+  return onSnapshot(
+    authUid ? query(col, where('submittedByAuthUid', '==', authUid)) : col,
+    snapshot => {
+      const list: FieldReport[] = [];
+      snapshot.forEach(docSnap => list.push(docSnap.data() as FieldReport));
+      list.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
+      callback(list);
+    },
+    error => {
+      handleFirestoreError(error, OperationType.GET, 'fieldReports');
+    }
+  );
+}
+
+export async function saveFieldReportToFirestore(report: FieldReport): Promise<void> {
+  try {
+    await setDoc(doc(db, 'fieldReports', report.id), sanitizeForFirestore(report), { merge: true });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `fieldReports/${report.id}`);
+  }
+}
+
+// -------------------------------------------------------------
+// FIELD CATALOG (nombres sin valores para el capataz)
+// -------------------------------------------------------------
+export function subscribeFieldCatalog(callback: (catalog: FieldCatalog | null) => void): Unsubscribe {
+  return onSnapshot(
+    doc(db, 'catalogoCampo', 'actual'),
+    snap => callback(snap.exists() ? (snap.data() as FieldCatalog) : null),
+    error => {
+      handleFirestoreError(error, OperationType.GET, 'catalogoCampo/actual');
+    }
+  );
+}
+
+export async function saveFieldCatalogToFirestore(catalog: FieldCatalog): Promise<void> {
+  try {
+    await setDoc(doc(db, 'catalogoCampo', 'actual'), sanitizeForFirestore(catalog));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'catalogoCampo/actual');
+  }
+}
+
+/** Rol de una cuenta (userRoles/{authUid}); cada cuenta puede leer el suyo. */
+export async function fetchOwnRole(authUid: string): Promise<string | null> {
+  try {
+    const snap = await getDoc(doc(db, 'userRoles', authUid));
+    return snap.exists() ? ((snap.data() as { role?: string }).role ?? null) : null;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `userRoles/${authUid}`);
+    return null;
+  }
+}
+
+export interface OwnRoleInfo {
+  role: string | null;
+  active: boolean;
+  mustChangePassword: boolean;
+}
+
+/** Rol, estado y marca de clave temporal de la cuenta (userRoles/{authUid}); cada cuenta lee el suyo. */
+export async function fetchOwnRoleInfo(authUid: string): Promise<OwnRoleInfo> {
+  try {
+    const snap = await getDoc(doc(db, 'userRoles', authUid));
+    if (!snap.exists()) return { role: null, active: false, mustChangePassword: false };
+    const data = snap.data() as { role?: string; active?: boolean; mustChangePassword?: boolean };
+    return { role: data.role ?? null, active: data.active === true, mustChangePassword: data.mustChangePassword === true };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `userRoles/${authUid}`);
+    return { role: null, active: false, mustChangePassword: false };
+  }
+}
+
+/** Solo el perfil de la cuenta indicada: es lo único que las reglas dejan leer a un capataz. */
+export function subscribeOwnUser(authUid: string, callback: (users: UserProfile[]) => void): Unsubscribe {
+  return onSnapshot(
+    query(collection(db, 'users'), where('authUid', '==', authUid)),
+    snapshot => {
+      const list: UserProfile[] = [];
+      snapshot.forEach(docSnap => list.push(docSnap.data() as UserProfile));
+      callback(list);
+    },
+    error => {
+      handleFirestoreError(error, OperationType.GET, 'users(own)');
+    }
+  );
+}

@@ -33,7 +33,8 @@ export const CobradoView: React.FC<CobradoViewProps> = ({ onNavigateToArchive })
 
   // Filter records in 'Cobrado'
   const cobrados = useMemo(() => {
-    return technicalAuditRecords.filter(r => r.status === 'Cobrado');
+    // Los remitos archivados salen de esta lista de trabajo; siguen en Auditoría Técnica (búsqueda y filtro Archivado)
+    return technicalAuditRecords.filter(r => r.status === 'Cobrado' && !r.archivado);
   }, [technicalAuditRecords]);
 
   // Apply search

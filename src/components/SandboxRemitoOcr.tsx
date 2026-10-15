@@ -1,4 +1,5 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
+import { getCurrentIdToken } from '../services/authService';
 import {
   Sparkles,
   Upload,
@@ -138,7 +139,7 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
   const [sourceMode, setSourceMode] = useState<'drive' | 'local' | 'ejemplo'>('drive');
 
   // Available client names for matching hints
-  const clientNamesList = useMemo(() => clients.map(c => c.name), [clients]);
+  const clientNamesList = useMemo(() => clients.map(c => c.razonSocial), [clients]);
   // Available worker names
   const workerNamesList = useMemo(() => {
     const list = workers.map(w => w.name);
@@ -429,9 +430,13 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
     setScanStep(retryCount > 0 ? `Reintentando lectura con IA (intento ${retryCount + 1}/3)...` : 'Analizando caligrafía manuscrita con Gemini Vision...');
 
     try {
+      const idToken = await getCurrentIdToken();
       const response = await fetch('/api/ai/scan-remito', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {})
+        },
         body: JSON.stringify({
           image: imgData,
           mimeType: mime,
@@ -499,10 +504,8 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
         });
         setTeamMembers(assignedTeam);
       } else {
-        setTeamMembers([
-          { name: 'FACUNDO', role: 'Oficial', rate: technicalParameters.horaOficial || 9400 },
-          { name: 'AYUDANTE', role: 'Ayudante', rate: technicalParameters.pagoAyudanteHora || 5500 }
-        ]);
+        // Si la IA no lee personal, el campo queda vacío: no se inventa una cuadrilla.
+        setTeamMembers([]);
       }
 
       // Populate materials
@@ -533,30 +536,28 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
   // Instant preloader for the user's real uploaded paper remito (El Magistral Nº 0002-00010966)
   const handlePreloadUserRemito = () => {
     setRemitoPapel('0002-00010966');
-    setFecha('2026-09-03');
+    setFecha('2026-08-03');
     setCliente('EL MAGISTRAL');
     setUbicacion('LOS PINTADOS');
     setPuntoTrabajo('CABAÑA, GALPÓN, SALA DE RIEGO');
-    setHoraEntrada('08:30');
+    setHoraEntrada('13:30');
     setHoraSalida('17:00');
-    setHorasTrabajadas(8.5);
+    setHorasTrabajadas(3.5);
     setKilometros(35);
     setViajes(1);
     setIsGuardia(false);
     setTecnicoLider('FACUNDO');
     setDescripcion(
-      'Se realiza en cabaña el cambio de disyuntor que era chico, se colocó uno de 40A. En galpón se realizó el armado de un fotocontrol y en sala de riego se revisaron los fotocontroles ya que los que habían se encendían. En sala de riego se escucha zumbido bobina.'
+      'Se realiza en cabaña el cambio de disyuntor que era chico, se cambió a uno de 40A. En galpón se realizó el cambio de un fotocontrol y en sala de riego se cambian dos fotocontroles ya que los que estaban se encontraban dañados. En sala de riego se encontró luminaria dañada.'
     );
     setTeamMembers([
       { name: 'FACUNDO', role: 'Oficial', rate: technicalParameters.horaOficial || 9400 },
-      { name: 'AYUDANTE TÉCNICO', role: 'Ayudante', rate: technicalParameters.pagoAyudanteHora || 5500 }
+      { name: 'MATÍAS V', role: 'Ayudante', rate: technicalParameters.pagoAyudanteHora || 5500 }
     ]);
-    setDetectedMaterialsList([
-      { descripcion: 'Disyuntor diferencial 40A', cantidad: 1 },
-      { descripcion: 'Fotocontrol para galpón', cantidad: 1 }
-    ]);
+    // El papel no detalla materiales (casillero de cantidad vacío): se completan al convertir.
+    setDetectedMaterialsList([]);
     setScanConfidence(96);
-    setRawAiNotes('Lectura de comprobante original Nº 0002-00010966 con 2 operarios y 8.5 hs de labor.');
+    setRawAiNotes('Remito Nº 0002-00010966: 2 personas, 3,5 hs (13:30 a 17:00). Fecha confirmada: 03/08/2026.');
     setScanError(null);
   };
 
@@ -649,6 +650,7 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
       laborDirectCost: calculatedCosts.laborDirectCost,
       operatingCost: calculatedCosts.operatingCost,
       materialsCost: materialCostEstimated,
+      materialsDetails: detectedMaterialsList.map(m => `${m.cantidad ?? 1}x ${m.descripcion}`).join(', ') || undefined,
       description: descripcion.trim() || 'Sin descripción detallada.',
       suggestedPrice: calculatedCosts.suggestedPrice,
       billedPrice: calculatedCosts.suggestedPrice,
@@ -676,6 +678,7 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
     horaSalida,
     calculatedCosts,
     materialCostEstimated,
+    detectedMaterialsList,
     descripcion,
     tecnicoLider,
     currentUser.displayName,
@@ -713,7 +716,7 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
           </p>
           <p>
             Prueba cómo la Inteligencia Artificial reconoce la <strong>letra manuscrita</strong>, extrae horas, clientes, personal y tareas, y calcula en tiempo real los costos operativos exactamente como se verá en la <strong>Tabla de Administración</strong>.
-            <strong className="text-amber-600 dark:text-amber-400"> Este entorno es 100% aislado: nada de lo que pruebes aquí se guardará en producción ni alterará la nómina de tu cliente.</strong>
+            <strong className="text-amber-600 dark:text-amber-400"> Este entorno está aislado: nada de lo que pruebes aquí se guarda en producción ni altera la nómina, salvo que pases un remito a producción de forma expresa (botón "A Producción", con confirmación).</strong>
           </p>
         </div>
       </div>

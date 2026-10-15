@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import {
+  MessageCircle,
+  Inbox,
   Layers,
   FileSpreadsheet,
   FileCheck2,
@@ -29,7 +31,8 @@ import {
   FlaskConical,
   BookOpen,
   HardHat,
-  Truck
+  Truck,
+  BarChart3
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -57,7 +60,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenResetModal,
   onOpenImportExcel
 }) => {
-  const { technicalAuditRecords, archivedReceipts, clients, workers, vehicles } = useData();
+  const { technicalAuditRecords, archivedReceipts, clients, workers, vehicles, fieldReports } = useData();
+  const countPartesPendientes = fieldReports.filter(r => r.status === 'Pendiente').length;
   const {
     currentUser,
     canViewFinancials,
@@ -73,7 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const countCargados = technicalAuditRecords.filter(r => r.status === 'Cargado').length;
   const countFacturados = technicalAuditRecords.filter(r => r.status === 'Facturado').length;
   const countPasados = technicalAuditRecords.filter(r => r.status === 'Pasado').length;
-  const countCobrados = technicalAuditRecords.filter(r => r.status === 'Cobrado').length;
+  const countCobrados = technicalAuditRecords.filter(r => r.status === 'Cobrado' && !r.archivado).length;
   const countArchivos = archivedReceipts.length;
 
   const navGroups = [
@@ -87,6 +91,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
           restricted: !permissions.viewDashboard,
           badge: null
         },
+        {
+          id: 'estado',
+          label: 'Panel de Estado',
+          subtitle: 'Resumen gráfico por etapa',
+          icon: BarChart3,
+          restricted: !permissions.viewDashboard,
+          badge: null
+        },
+        {
+          id: 'partes',
+          label: 'Partes de Campo',
+          subtitle: 'Cargados por capataces',
+          icon: Inbox,
+          restricted: !permissions.manageAudits,
+          badge: countPartesPendientes > 0 ? countPartesPendientes : null,
+          badgeColor: 'bg-amber-500 text-slate-950 font-black'
+        },
+        ...(__DEMO__
+          ? [
+              {
+                id: 'canales',
+                label: 'Canales de Entrada',
+                subtitle: 'WhatsApp y Drive (simulador)',
+                icon: MessageCircle,
+                restricted: !permissions.manageAudits,
+                badge: 'DEMO',
+                badgeColor: 'bg-emerald-500 text-slate-950 font-black'
+              }
+            ]
+          : []),
         {
           id: 'auditoria',
           label: 'Auditoría Técnica',

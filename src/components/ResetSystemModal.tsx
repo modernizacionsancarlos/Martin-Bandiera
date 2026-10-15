@@ -14,6 +14,11 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { useAuth } from '../context/AuthContext';
+import { buildBackupPayload, downloadBackup } from '../utils/backupUtils';
+
+// Frase que hay que escribir para habilitar cualquier borrado masivo.
+const CONFIRM_PHRASE = 'BORRAR TODO';
 
 interface ResetSystemModalProps {
   isOpen: boolean;
@@ -32,10 +37,17 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
     materials,
     archivedReceipts,
     financialReports,
+    projects,
+    maintenanceServices,
+    workers,
+    technicalParameters,
+    vehicles,
+    vehicleEvents,
     clearSystemToZero,
     clearDemoDataOnly,
     resetAllData
   } = useData();
+  const { users } = useAuth();
 
   const [clearAudits, setClearAudits] = useState(true);
   const [clearClients, setClearClients] = useState(true);
@@ -49,6 +61,28 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
 
   if (!isOpen) return null;
 
+  const wipeConfirmed = confirmInput.trim().toUpperCase() === CONFIRM_PHRASE;
+
+  // Antes de cualquier borrado masivo se descarga un respaldo completo de los datos actuales.
+  const downloadSafetyBackup = () =>
+    downloadBackup(
+      buildBackupPayload({
+        users,
+        technicalParameters,
+        technicalAuditRecords,
+        financialReports,
+        projects,
+        maintenanceServices,
+        materials,
+        workers,
+        clients,
+        vehicles,
+        vehicleEvents,
+        archivedReceipts
+      }),
+      'antes_de_poner_en_0'
+    );
+
   const handleSelectAll = (val: boolean) => {
     setClearAudits(val);
     setClearClients(val);
@@ -58,6 +92,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
   };
 
   const handleResetAllToZero = () => {
+    if (!wipeConfirmed) return;
+    downloadSafetyBackup();
     clearSystemToZero({
       clearAudits: true,
       clearClients: true,
@@ -77,6 +113,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
   };
 
   const handleExecuteClear = () => {
+    if (!wipeConfirmed) return;
+    downloadSafetyBackup();
     clearSystemToZero({
       clearAudits,
       clearClients,
@@ -243,14 +281,29 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
                 </div>
               </div>
 
-              {/* The Big One-Click Button */}
+              {/* Confirmación escrita: el borrado masivo ya no se hace con un solo clic */}
+              <div className="rounded-2xl border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 p-3 space-y-2">
+                <label className="block text-xs font-bold text-rose-700 dark:text-rose-300">
+                  Para habilitar el borrado escriba <span className="font-mono">{CONFIRM_PHRASE}</span>. Se descargará
+                  automáticamente un respaldo completo antes de borrar.
+                </label>
+                <input
+                  type="text"
+                  value={confirmInput}
+                  onChange={e => setConfirmInput(e.target.value)}
+                  placeholder={CONFIRM_PHRASE}
+                  autoComplete="off"
+                  className="w-full px-3 py-2 rounded-xl border border-rose-300 dark:border-rose-700 bg-white dark:bg-slate-900 text-sm font-mono text-slate-900 dark:text-white focus:outline-none focus:border-rose-500"
+                />
+              </div>
               <button
                 type="button"
                 onClick={handleResetAllToZero}
-                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl text-sm font-black text-white bg-rose-600 hover:bg-rose-500 active:scale-98 transition shadow-lg shadow-rose-600/30 cursor-pointer"
+                disabled={!wipeConfirmed}
+                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl text-sm font-black text-white bg-rose-600 hover:bg-rose-500 active:scale-98 transition shadow-lg shadow-rose-600/30 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-5 h-5" />
-                <span>PONER TODO EL SISTEMA EN 0 (1 SOLO CLIC)</span>
+                <span>DESCARGAR RESPALDO Y PONER TODO EN 0</span>
               </button>
             </div>
 
@@ -380,7 +433,7 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
                 <button
                   type="button"
                   onClick={handleExecuteClear}
-                  disabled={!clearAudits && !clearClients && !clearMaterials && !clearReceipts && !clearFinancials}
+                  disabled={!wipeConfirmed || (!clearAudits && !clearClients && !clearMaterials && !clearReceipts && !clearFinancials)}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 disabled:opacity-50 transition cursor-pointer"
                 >
                   Vaciar Solo Módulos Marcados
@@ -399,6 +452,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
               </button>
 
               <div className="flex items-center gap-3">
+                {__DEMO__ && (
+                  <>
                 <button
                   type="button"
                   onClick={handleClearDemoOnly}
@@ -418,6 +473,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
                   <RotateCcw className="w-3.5 h-3.5" />
                   <span>Restaurar datos Demo</span>
                 </button>
+                  </>
+                )}
               </div>
             </div>
 

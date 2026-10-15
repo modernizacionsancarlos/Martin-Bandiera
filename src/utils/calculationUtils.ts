@@ -527,6 +527,7 @@ export const AUTHORIZED_14_WORKERS_MAP = new Map(
  */
 export function isAuthorizedWorkerOrStaff(item?: {
   id?: string;
+  uid?: string;
   name?: string;
   displayName?: string;
   email?: string;
@@ -558,8 +559,10 @@ export function isAuthorizedWorkerOrStaff(item?: {
     return true;
   }
 
-  // Any worker registered in the system (e.g. added via UI or Excel)
-  if (item.id && (item.id.startsWith('WRK-') || item.id.length >= 3)) {
+  // Any worker or user registered in the system (e.g. added via UI or Excel).
+  // Los perfiles de usuario guardan su identificador en `uid` y los del personal en `id`.
+  const registeredId = item.id || item.uid;
+  if (registeredId && (registeredId.startsWith('WRK-') || registeredId.length >= 3)) {
     return true;
   }
 

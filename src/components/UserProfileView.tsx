@@ -5,7 +5,6 @@ import { useTheme } from '../context/ThemeContext';
 
 export const UserProfileView: React.FC = () => {
   const { currentUser, isSuperAdmin } = useAuth();
-  const { theme, isDarkMode } = useTheme();
 
   return (
     <div className="space-y-6 max-w-4xl">

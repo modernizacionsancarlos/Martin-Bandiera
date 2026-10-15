@@ -35,11 +35,23 @@ import {
   ArrowLeft,
   ChevronsLeft,
   ChevronsRight,
-  Maximize2
+  Maximize2,
+  BarChart3,
+  Smartphone,
+  MessageCircle,
+  KeyRound,
+  ShieldCheck
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { generateSystemManualPDF } from '../utils/manualPdfGenerator';
+import {
+  MANUAL_EXTRA_SECTIONS,
+  MANUAL_VERSION,
+  MANUAL_REVIEW,
+  type ManualBlock,
+  type ManualExtraSection
+} from '../utils/manualExtraSections';
 
 type ManualSectionId =
   | 'todos'
@@ -54,6 +66,11 @@ type ManualSectionId =
   | 'usuarios-seguridad'
   | 'parametros'
   | 'sandbox'
+  | 'panel-estado'
+  | 'app-campo'
+  | 'canales'
+  | 'usuarios-claves'
+  | 'respaldos'
   | 'faq';
 
 export const UserManualView: React.FC = () => {
@@ -74,7 +91,7 @@ export const UserManualView: React.FC = () => {
     try {
       setIsExporting(true);
       generateSystemManualPDF(technicalParameters);
-      showToast('¡Manual oficial v2026.9 descargado en PDF con éxito!');
+      showToast(`¡Manual oficial ${MANUAL_VERSION} descargado en PDF con éxito!`);
     } catch (err: any) {
       showToast('Error al generar el PDF: ' + (err?.message || 'Reintente'));
     } finally {
@@ -95,11 +112,15 @@ export const UserManualView: React.FC = () => {
     { id: 'ciclo-remitos', label: '5. Ciclo del Remito', icon: FileSpreadsheet },
     { id: 'liquidacion', label: '6. Liquidación', icon: DollarSign },
     { id: 'clientes', label: '7. Clientes & KM', icon: MapPin },
-    { id: 'obras-stock', label: '8. Obras & Stock', icon: Building2 },
-    { id: 'usuarios-seguridad', label: '9. Usuarios RBAC', icon: Shield },
-    { id: 'parametros', label: '10. Costos Fijos', icon: Sliders },
-    { id: 'sandbox', label: '11. Espacio Sandbox', icon: FlaskConical },
-    { id: 'faq', label: '12. Preguntas Frecuentes', icon: HelpCircle }
+    { id: 'usuarios-seguridad', label: '8. Usuarios RBAC', icon: Shield },
+    { id: 'parametros', label: '9. Costos Fijos', icon: Sliders },
+    { id: 'sandbox', label: '10. Espacio Sandbox', icon: FlaskConical },
+    { id: 'panel-estado', label: '11. Panel de Estado y Archivo', icon: BarChart3, isNew: true },
+    { id: 'app-campo', label: '12. App del Capataz', icon: Smartphone, isNew: true },
+    { id: 'canales', label: '13. WhatsApp y Drive', icon: MessageCircle, isNew: true },
+    { id: 'usuarios-claves', label: '14. Usuarios y Claves', icon: KeyRound, isNew: true },
+    { id: 'respaldos', label: '15. Respaldos y Seguridad', icon: ShieldCheck, isNew: true },
+    { id: 'faq', label: '16. Preguntas Frecuentes', icon: HelpCircle }
   ];
 
   // Filter content based on search query
@@ -161,7 +182,7 @@ export const UserManualView: React.FC = () => {
             <div className="flex items-center gap-2.5 flex-wrap">
               <span className="px-3 py-1 rounded-full bg-cyan-500/20 text-[#00c2ff] border border-cyan-400/40 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
                 <Sparkles className="w-3 h-3" />
-                <span>Versión Oficial v2026.9</span>
+                <span>Versión Oficial {MANUAL_VERSION}</span>
               </span>
               <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5">
                 <CheckCircle2 className="w-3 h-3" />
@@ -181,7 +202,7 @@ export const UserManualView: React.FC = () => {
             <div className="flex items-center gap-4 text-[11px] text-slate-400 pt-1 font-medium">
               <span className="flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-slate-400" />
-                Última revisión: Septiembre 2026
+                Última revisión: {MANUAL_REVIEW}
               </span>
               <span className="flex items-center gap-1.5">
                 <Shield className="w-3.5 h-3.5 text-cyan-400" />
@@ -256,6 +277,9 @@ export const UserManualView: React.FC = () => {
             >
               <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#00c2ff]' : 'text-slate-400'}`} />
               <span>{sec.label}</span>
+              {(sec as { isNew?: boolean }).isNew && (
+                <span className="px-1.5 py-0.5 rounded-full bg-emerald-500 text-slate-950 text-[9px] font-black uppercase">Nuevo</span>
+              )}
             </button>
           );
         })}
@@ -1101,7 +1125,7 @@ export const UserManualView: React.FC = () => {
                   </div>
                 </div>
                 <span className="px-2.5 py-1 rounded-full bg-cyan-500 text-slate-950 font-black text-[10px] uppercase w-fit">
-                  Última Actualización v2026.9
+                  Última Actualización {MANUAL_VERSION}
                 </span>
               </div>
 
@@ -1321,9 +1345,9 @@ export const UserManualView: React.FC = () => {
                     <td className="p-3 text-rose-500 font-bold">Sin Acceso</td>
                   </tr>
                   <tr className="hover:bg-cyan-50/20 dark:hover:bg-slate-800/40">
-                    <td className="p-3 font-bold text-slate-800 dark:text-white">Técnico de Campo</td>
-                    <td className="p-3 text-emerald-500 font-bold">Carga</td>
-                    <td className="p-3 text-slate-400 font-bold">Solo Propios</td>
+                    <td className="p-3 font-bold text-slate-800 dark:text-white">Capataz (app de campo)</td>
+                    <td className="p-3 text-emerald-500 font-bold">Parte sin valores</td>
+                    <td className="p-3 text-rose-500 font-bold">Sin Acceso</td>
                     <td className="p-3 text-rose-500 font-bold">Sin Acceso</td>
                     <td className="p-3 text-rose-500 font-bold">Sin Acceso</td>
                     <td className="p-3 text-rose-500 font-bold">Sin Acceso</td>
@@ -1336,13 +1360,13 @@ export const UserManualView: React.FC = () => {
             <div className="p-4 rounded-2xl bg-rose-50 dark:bg-rose-950/30 border-2 border-rose-300 dark:border-rose-800 space-y-2 text-xs">
               <span className="font-black text-rose-700 dark:text-rose-300 uppercase tracking-wider block flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-rose-500" />
-                <span>Procedimiento de Baja Definitiva de Usuario (Solución al error anterior):</span>
+                <span>Procedimiento de Baja Definitiva de Usuario:</span>
               </span>
               <p className="text-rose-950 dark:text-rose-200 text-[11px] leading-relaxed">
                 1. Dirígete a <strong>Usuarios y Permisos</strong>.<br />
                 2. En la fila del usuario a desvincular, presiona el botón rojo con icono de papelera (Eliminar).<br />
                 3. Se abrirá el modal de confirmación. Presiona <strong>Confirmar Eliminación</strong>.<br />
-                4. <strong>Garantía de Persistencia:</strong> El sistema ahora elimina el documento de Firestore y registra el UID en la <em>Lista Negra de Bajas (Tombstone Blacklist)</em>. Aunque se recargue el navegador o se limpie la caché, el usuario jamás volverá a reaparecer.
+                4. <strong>Garantía de Persistencia:</strong> El sistema elimina el perfil, da de baja la cuenta de acceso desde el servidor y registra la baja. Aunque se recargue el navegador o se limpie la caché, el usuario no vuelve a reaparecer ni puede ingresar. Para el alta, la clave temporal y el restablecimiento de claves, ver la sección 14.
               </p>
             </div>
           </section>
@@ -1454,24 +1478,32 @@ export const UserManualView: React.FC = () => {
                   <span>Subpestaña 2: Remitos de Prueba</span>
                 </span>
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
-                  Puedes cargar remitos de prueba con número de papel manual. Estos registros viven en un almacenamiento aislado. Si un remito de prueba queda verificado y quieres incorporarlo a la gestión real, cuenta con el botón <strong>"A Producción"</strong> que lo promueve con un solo clic.
+                  Puedes cargar remitos de prueba con número de papel manual. Estos registros viven en un almacenamiento aislado de ese navegador. Si un remito de prueba queda verificado y quieres incorporarlo a la gestión real, usa el botón <strong>"A Producción"</strong>: pide confirmación con el detalle del remito, exige elegir un <strong>cliente real</strong> de la base, lo crea con el <strong>siguiente número de remito real</strong> (no el de prueba), recalcula el precio con las tarifas vigentes y queda marcado <strong>"En producción"</strong> para que no se pueda cargar dos veces.
                 </p>
               </div>
             </div>
           </section>
         )}
 
-        {/* 11. PREGUNTAS FRECUENTES (FAQ) */}
+        {/* 11 a 15. FUNCIONES NUEVAS (contenido compartido con el PDF) */}
+        {MANUAL_EXTRA_SECTIONS.map(section =>
+          (activeSection === 'todos' || activeSection === section.id) &&
+          matchesSearch(section.keywords + ' ' + section.title + ' ' + section.subtitle) ? (
+            <ExtraSection key={section.id} section={section} />
+          ) : null
+        )}
+
+        {/* 16. PREGUNTAS FRECUENTES (FAQ) */}
         {(activeSection === 'todos' || activeSection === 'faq') && matchesSearch('faq preguntas frecuentes dudas errores solucion conexion offline') && (
           <section id="faq" className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-2xl bg-cyan-50 dark:bg-cyan-950/60 text-[#00c2ff] flex items-center justify-center font-black">
-                  11
+                  16
                 </div>
                 <div>
                   <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight">
-                    11. Preguntas Frecuentes y Solución Rápida de Dudas
+                    16. Preguntas Frecuentes y Solución Rápida de Dudas
                   </h2>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
                     Respuestas inmediatas a las situaciones más comunes durante la jornada
@@ -1499,7 +1531,7 @@ export const UserManualView: React.FC = () => {
                   ¿Qué sucede si un técnico carga un reporte sin señal de internet en el campo?
                 </span>
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
-                  El sistema cuenta con arquitectura <em>Offline-First</em>. La orden se guarda de manera segura en la memoria interna del navegador del dispositivo móvil. En cuanto el teléfono detecta señal en la ruta o al conectarse al Wi-Fi de la empresa, sincroniza los registros con la base central automáticamente.
+                  Hoy el sistema necesita conexión para guardar: el indicador de la esquina inferior derecha muestra "Sin conexión" y cuántos cambios quedan sin sincronizar, y avisa antes de cerrar la pestaña. La carga sin conexión (guardar en el teléfono y sincronizar al volver la señal) es parte de la aplicación instalable del capataz para Android, que está planificada (ver sección 12).
                 </p>
               </div>
 
@@ -1508,7 +1540,7 @@ export const UserManualView: React.FC = () => {
                   ¿Cómo descargo este manual para imprimirlo o enviarlo por WhatsApp a los técnicos?
                 </span>
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
-                  Pulsa el botón superior <strong>"Descargar Manual en PDF"</strong>. Se generará un documento PDF de 11 páginas diagramado en formato A4 con portada institucional, tablas y fórmulas listo para compartir o imprimir.
+                  Pulsa el botón superior <strong>"Descargar Manual en PDF"</strong>. Se generará un documento PDF diagramado en formato A4 con portada institucional, tablas y fórmulas listo para compartir o imprimir.
                 </p>
               </div>
 
@@ -1517,7 +1549,43 @@ export const UserManualView: React.FC = () => {
                   ¿Se actualiza este manual cada vez que se agreguen nuevas funciones?
                 </span>
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
-                  Sí. Toda nueva modificación en tarifas, pantallas, permisos o cálculos queda incorporada de forma permanente tanto en esta vista interactiva como en el motor de exportación a PDF para que siempre consultes la última versión disponible (v2026.9).
+                  Sí. Toda nueva modificación en tarifas, pantallas, permisos o cálculos queda incorporada de forma permanente tanto en esta vista interactiva como en el motor de exportación a PDF para que siempre consultes la última versión disponible ({MANUAL_VERSION}).
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="font-black text-slate-900 dark:text-white text-xs block text-cyan-600 dark:text-cyan-400">
+                  ¿El capataz puede ver precios o costos?
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
+                  No. La aplicación del capataz solo permite cargar partes de campo (horas, personal, materiales, descripción y firma). Su sesión no recibe precios, tarifas, costos, sueldos ni remitos. Administración calcula los valores al convertir el parte en remito (sección 12).
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="font-black text-slate-900 dark:text-white text-xs block text-cyan-600 dark:text-cyan-400">
+                  ¿Qué hago si un usuario olvidó su contraseña o no tiene correo?
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
+                  En "Usuarios y Permisos" presioná "Restablecer clave": el sistema genera una clave temporal que se muestra una sola vez. Entregásela al usuario; deberá elegir una propia al ingresar (sección 14).
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="font-black text-slate-900 dark:text-white text-xs block text-cyan-600 dark:text-cyan-400">
+                  ¿Dónde están los remitos que ya cobré y archivé?
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
+                  Siguen en Auditoría Técnica: salen de las listas de trabajo pero siempre aparecen en la búsqueda y con el filtro "Archivado". Se pueden desarchivar y salen en la exportación a Excel (sección 11).
+                </p>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-1">
+                <span className="font-black text-slate-900 dark:text-white text-xs block text-cyan-600 dark:text-cyan-400">
+                  ¿Por qué un parte que llegó por foto dice "Revisar antes de convertir"?
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
+                  Porque la lectura de letra manuscrita puede equivocarse. El sistema marca lo que no pudo confirmar (cliente o personal desconocidos, fecha dudosa, horario incompleto, lectura poco clara) para que una persona lo verifique contra la foto antes de crear el remito (sección 13).
                 </p>
               </div>
             </div>
@@ -1555,3 +1623,104 @@ export const UserManualView: React.FC = () => {
 function LayersIcon(props: any) {
   return <Sparkles {...props} />;
 }
+
+
+const NOTE_TONE: Record<'info' | 'warn' | 'ok', string> = {
+  info: 'bg-cyan-50 dark:bg-cyan-950/30 border-cyan-300 dark:border-cyan-800 text-cyan-900 dark:text-cyan-200',
+  warn: 'bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-200',
+  ok: 'bg-emerald-50 dark:bg-emerald-950/30 border-emerald-300 dark:border-emerald-800 text-emerald-900 dark:text-emerald-200'
+};
+
+const ManualBlockView: React.FC<{ block: ManualBlock }> = ({ block }) => {
+  switch (block.type) {
+    case 'p':
+      return <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">{block.text}</p>;
+    case 'steps':
+      return (
+        <div className="space-y-2">
+          {block.title && <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">{block.title}</h3>}
+          <ol className="space-y-1.5">
+            {block.items.map((item, i) => (
+              <li key={i} className="flex gap-2.5 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                <span className="shrink-0 w-5 h-5 rounded-full bg-cyan-100 dark:bg-cyan-950 text-[#00a8dd] flex items-center justify-center font-black text-[10px]">{i + 1}</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      );
+    case 'bullets':
+      return (
+        <div className="space-y-2">
+          {block.title && <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">{block.title}</h3>}
+          <ul className="space-y-1.5">
+            {block.items.map((item, i) => (
+              <li key={i} className="flex gap-2 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                <Check className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    case 'table':
+      return (
+        <div className="space-y-2 overflow-x-auto">
+          {block.title && <h3 className="text-xs font-black uppercase tracking-wider text-slate-900 dark:text-white">{block.title}</h3>}
+          <table className="w-full text-left text-xs border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden">
+            <thead className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-[10px] font-black uppercase">
+              <tr>
+                {block.head.map(h => (
+                  <th key={h} className="p-3">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+              {block.rows.map((row, i) => (
+                <tr key={i}>
+                  {row.map((cell, j) => (
+                    <td key={j} className={`p-3 ${j === 0 ? 'font-bold text-slate-800 dark:text-white' : 'text-slate-600 dark:text-slate-300'}`}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case 'note':
+      return (
+        <div className={`p-4 rounded-2xl border space-y-1 ${NOTE_TONE[block.tone]}`}>
+          <span className="font-black uppercase tracking-wider text-[11px] flex items-center gap-2">
+            <Info className="w-3.5 h-3.5" />
+            <span>{block.title}</span>
+          </span>
+          <p className="text-[11px] leading-relaxed">{block.text}</p>
+        </div>
+      );
+  }
+};
+
+const ExtraSection: React.FC<{ section: ManualExtraSection }> = ({ section }) => (
+  <section id={section.id} className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-sm space-y-6">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-2xl bg-cyan-50 dark:bg-cyan-950/60 text-[#00c2ff] flex items-center justify-center font-black">
+          {section.num}
+        </div>
+        <div>
+          <h2 className="text-lg font-black text-slate-900 dark:text-white uppercase tracking-tight">
+            {section.num}. {section.title}
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">{section.subtitle}</p>
+        </div>
+      </div>
+      <div className="flex flex-col items-end gap-1">
+        <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-emerald-500 text-slate-950">{section.badge}</span>
+        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Estado: {section.status}</span>
+      </div>
+    </div>
+    {section.blocks.map((block, i) => (
+      <ManualBlockView key={i} block={block} />
+    ))}
+  </section>
+);

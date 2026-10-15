@@ -82,6 +82,7 @@ export const AUDIT_COLUMNS: ColumnConfig[] = [
   { id: 'costo_honorarios', label: 'COSTO HONORARIOS ($)', defaultVisible: true },
   { id: 'costo_total_remito', label: 'COSTO TOTAL DEL REMITO ($)', defaultVisible: true },
   { id: 'estado', label: 'ESTADO', defaultVisible: true },
+  { id: 'fecha_archivo', label: 'FECHA DE ARCHIVO', defaultVisible: true },
   { id: 'acciones', label: 'ACCIONES', defaultVisible: true }
 ];
 
@@ -97,6 +98,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     updateTechnicalAuditRecord,
     deleteTechnicalAuditRecord,
     bulkPassToFacturado,
+    bulkSetArchived,
     workers,
     technicalParameters
   } = useData();
@@ -140,6 +142,12 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
+          // Columna nueva "Fecha de archivo": se agrega una sola vez a quienes ya tenían una selección guardada
+          const ARCHIVE_COL_FLAG = `${STORAGE_KEY}_fecha_archivo_agregada`;
+          if (!parsed.includes('fecha_archivo') && !localStorage.getItem(ARCHIVE_COL_FLAG)) {
+            localStorage.setItem(ARCHIVE_COL_FLAG, '1');
+            return [...parsed, 'fecha_archivo'];
+          }
           return parsed;
         }
       }
@@ -398,8 +406,9 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     return dateStr;
   };
 
-  // Filtered Records
-  const filteredRecords = useMemo(() => {
+  // Filtros de la tabla. En la lista, los archivados se ocultan salvo al buscar o filtrar por "Archivado".
+  // En la exportación a Excel los archivados siempre se incluyen (salvo que se filtre por otro estado).
+  const filterAuditRecords = (forExport: boolean) => {
     return technicalAuditRecords.filter(record => {
       // Search
       const matchesSearch =
@@ -417,9 +426,15 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
         (filterGuardia === 'guardia' && record.isGuardia) ||
         (filterGuardia === 'ordinario' && !record.isGuardia);
 
-      // Status
+      // Status. "Archivado" es un paso posterior a Cobrado: el remito conserva status "Cobrado".
       const matchesStatus =
-        filterStatus === 'all' || record.status === filterStatus;
+        filterStatus === 'all' || filterStatus === 'Archivado' || record.status === filterStatus;
+
+      // Archivados: se ocultan de la lista normal, pero siempre aparecen al buscar o al filtrar por "Archivado"
+      const matchesArchive =
+        filterStatus === 'Archivado'
+          ? Boolean(record.archivado)
+          : forExport || Boolean(searchTerm) || !record.archivado;
 
       // Client
       const matchesClient =
@@ -434,9 +449,15 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       const matchesStart = !startDate || record.date >= startDate;
       const matchesEnd = !endDate || record.date <= endDate;
 
-      return matchesSearch && matchesGuardia && matchesStatus && matchesClient && matchesSemaforo && matchesStart && matchesEnd;
+      return matchesSearch && matchesGuardia && matchesStatus && matchesArchive && matchesClient && matchesSemaforo && matchesStart && matchesEnd;
     });
-  }, [technicalAuditRecords, searchTerm, filterGuardia, filterStatus, filterClient, filterSemaforo, startDate, endDate]);
+  };
+
+  // Filtered Records
+  const filteredRecords = useMemo(
+    () => filterAuditRecords(false),
+    [technicalAuditRecords, searchTerm, filterGuardia, filterStatus, filterClient, filterSemaforo, startDate, endDate]
+  );
 
   // Semáforo counts
   const semaforoCounts = useMemo(() => {
@@ -632,13 +653,57 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
 
   // Export to Excel (.xlsx) with ONLY visible columns
   const handleExportExcel = () => {
-    const dataColumns = visibleColumns.filter(c => c !== 'acciones');
-    exportRemitosToExcel(filteredRecords, 'Auditoria_Tecnica_Bandiera', dataColumns);
+    // El estado de cada remito (y la fecha de archivo) siempre figuran en el Excel, aunque la columna esté oculta en pantalla.
+    const dataColumns = Array.from(new Set([...visibleColumns.filter(c => c !== 'acciones'), 'estado', 'fecha_archivo']));
+    exportRemitosToExcel(filterAuditRecords(true), 'Auditoria_Tecnica_Bandiera', dataColumns);
   };
 
-  const handleStatusChange = (id: string, newStatus: 'Cargado' | 'Facturado' | 'Pasado' | 'Cobrado') => {
+  // Archivar en bloque (cobrados que se ven con los filtros actuales) y desarchivar
+  const archivableVisible = filteredRecords.filter(r => r.status === 'Cobrado' && !r.archivado);
+  const archivedVisible = filteredRecords.filter(r => r.archivado);
+
+  const handleBulkArchive = async (records: TechnicalAuditRecord[], archive: boolean) => {
+    if (records.length === 0) return;
+    const accion = archive ? 'archivarán' : 'desarchivarán';
+    const detalle = archive
+      ? 'Seguirán disponibles en la búsqueda y en el filtro "Archivado", y se pueden desarchivar cuando quiera.'
+      : 'Vuelven a la lista de Cobrados.';
+    if (!window.confirm(`Se ${accion} ${records.length} ${records.length === 1 ? 'remito' : 'remitos'}. ${detalle} ¿Continuar?`)) return;
+    const changed = await bulkSetArchived(records.map(r => r.id), archive);
+    setSelectedRecordIds(prev => prev.filter(id => !records.some(r => r.id === id)));
+    setToastMessage(
+      archive
+        ? `${changed} ${changed === 1 ? 'remito archivado' : 'remitos archivados'}. Siguen disponibles en la búsqueda.`
+        : `${changed} ${changed === 1 ? 'remito desarchivado' : 'remitos desarchivados'}.`
+    );
+    setTimeout(() => setToastMessage(null), 4500);
+  };
+
+  const handleStatusChange = (id: string, newStatus: 'Cargado' | 'Facturado' | 'Pasado' | 'Cobrado' | 'Archivado') => {
     const record = technicalAuditRecords.find(r => r.id === id);
     if (!record) return;
+
+    // Paso extra: archivar un remito ya cobrado. Sigue en la búsqueda y en el filtro "Archivado".
+    if (newStatus === 'Archivado') {
+      if (record.status !== 'Cobrado') return;
+      updateTechnicalAuditRecord(id, {
+        archivado: true,
+        fechaArchivado: new Date().toISOString().split('T')[0]
+      });
+      setToastMessage(`Remito ${record.remitoId} archivado. Sigue disponible en la búsqueda y en el filtro "Archivado".`);
+      setTimeout(() => setToastMessage(null), 4500);
+      return;
+    }
+
+    // Volver atrás desde Archivado: vuelve a la lista de Cobrados (o al estado elegido)
+    if (record.archivado) {
+      updateTechnicalAuditRecord(id, { archivado: false, fechaArchivado: '' });
+      if (newStatus === 'Cobrado') {
+        setToastMessage(`Remito ${record.remitoId} desarchivado: vuelve a Cobrado.`);
+        setTimeout(() => setToastMessage(null), 3500);
+        return;
+      }
+    }
 
     if (newStatus === 'Cobrado') {
       setPaymentRecord(record);
@@ -1090,7 +1155,29 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               <option value="Facturado">FACTURADO</option>
               <option value="Pasado">PASADO</option>
               <option value="Cobrado">COBRADO</option>
+              <option value="Archivado">ARCHIVADO</option>
             </select>
+
+            {archivableVisible.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleBulkArchive(archivableVisible, true)}
+                className="px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-600 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                title="Archiva todos los remitos cobrados que se ven con los filtros actuales"
+              >
+                Archivar cobrados ({archivableVisible.length})
+              </button>
+            )}
+            {filterStatus === 'Archivado' && archivedVisible.length > 0 && (
+              <button
+                type="button"
+                onClick={() => handleBulkArchive(archivedVisible, false)}
+                className="px-3 py-2 text-xs rounded-xl border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-bold hover:bg-emerald-100 dark:hover:bg-emerald-900/50 cursor-pointer"
+                title="Devuelve a la lista de Cobrados los archivados que se ven con los filtros actuales"
+              >
+                Desarchivar ({archivedVisible.length})
+              </button>
+            )}
 
             {/* Client Filter Dropdown */}
             <select
@@ -1586,6 +1673,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                 {isColVisible('facturado') && <th className="p-3.5 text-right">FACTURADO ($)</th>}
                 {isColVisible('pago_tec') && <th className="p-3.5 text-right">PAGO TÉC. ($)</th>}
                 {isColVisible('estado') && <th className="p-3.5 text-center">ESTADO</th>}
+                {isColVisible('fecha_archivo') && <th className="p-3.5 text-center">FECHA ARCHIVO</th>}
                 {isColVisible('acciones') && <th className="p-3.5 text-center">ACCIONES</th>}
               </tr>
             </thead>
@@ -2115,11 +2203,13 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                       {isColVisible('estado') && (
                         <td className="p-3.5 text-center whitespace-nowrap">
                           <select
-                            value={record.status}
+                            value={record.archivado ? 'Archivado' : record.status}
                             onChange={e => handleStatusChange(record.id, e.target.value as any)}
                             className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider cursor-pointer border ${
                               isColoredRow
                                 ? 'bg-white/20 text-white border-white/40 focus:bg-slate-900 focus:text-white'
+                                : record.archivado
+                                ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/30'
                                 : record.status === 'Cobrado'
                                 ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30'
                                 : record.status === 'Facturado'
@@ -2133,7 +2223,17 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                             <option value="Facturado" className="bg-slate-900 text-white">FACTURADO</option>
                             <option value="Pasado" className="bg-slate-900 text-white">PASADO</option>
                             <option value="Cobrado" className="bg-slate-900 text-white">COBRADO</option>
+                            {record.status === 'Cobrado' && (
+                              <option value="Archivado" className="bg-slate-900 text-white">ARCHIVADO</option>
+                            )}
                           </select>
+                        </td>
+                      )}
+
+                      {/* FECHA DE ARCHIVO */}
+                      {isColVisible('fecha_archivo') && (
+                        <td className="p-3.5 text-center whitespace-nowrap font-mono text-[11px]">
+                          {record.archivado && record.fechaArchivado ? formatDisplayDate(record.fechaArchivado) : '—'}
                         </td>
                       )}
 
@@ -2552,6 +2652,24 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               <DollarSign className="w-4 h-4" />
               <span>Cobrar ({selectedRecordIds.length})</span>
             </button>
+
+            {technicalAuditRecords.some(r => selectedRecordIds.includes(r.id) && r.status === 'Cobrado' && !r.archivado) && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleBulkArchive(
+                    technicalAuditRecords.filter(r => selectedRecordIds.includes(r.id) && r.status === 'Cobrado' && !r.archivado),
+                    true
+                  )
+                }
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-600 hover:bg-slate-500 text-white transition-all shadow-xs cursor-pointer"
+                title="Archivar los remitos cobrados seleccionados"
+              >
+                <span>
+                  Archivar ({technicalAuditRecords.filter(r => selectedRecordIds.includes(r.id) && r.status === 'Cobrado' && !r.archivado).length})
+                </span>
+              </button>
+            )}
 
             <button
               type="button"

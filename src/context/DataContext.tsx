@@ -13,7 +13,9 @@ import {
   ArchivedReceipt,
   ClientItem,
   VehicleItem,
-  VehicleEventItem
+  VehicleEventItem,
+  FieldReport,
+  FieldCatalog
 } from '../types';
 import {
   INITIAL_FINANCIAL_REPORTS,
@@ -86,6 +88,10 @@ import {
   deleteVehicleEventFromFirestore,
   clearAllVehicleEventsInFirestore,
   subscribeSystemStatus,
+  subscribeFieldReports,
+  saveFieldReportToFirestore,
+  subscribeFieldCatalog,
+  saveFieldCatalogToFirestore,
   setSystemStatusInFirestore,
   normalizeTechnicalAuditRecord
 } from '../services/firestoreSync';
@@ -116,6 +122,14 @@ interface DataContextType {
   updateFinancialReport: (id: string, updates: Partial<FinancialMetricRecord>) => void;
   deleteFinancialReport: (id: string) => void;
 
+  // Partes de campo (los carga el capataz sin valores; administración los convierte en remitos)
+  fieldReports: FieldReport[];
+  /** Nombres sin valores para la app del capataz (clientes, personal, materiales). */
+  fieldCatalog: FieldCatalog | null;
+  addFieldReport: (input: Omit<FieldReport, 'id' | 'status' | 'submittedAt' | 'submittedByUid' | 'submittedByAuthUid' | 'submittedByName'>) => void;
+  markFieldReportConverted: (id: string, remitoId: string) => void;
+  discardFieldReport: (id: string, reason?: string) => void;
+
   // Technical Cost Parameters Actions
   updateTechnicalParameters: (updates: Partial<TechnicalCostParameters>) => void;
 
@@ -123,7 +137,14 @@ interface DataContextType {
   addTechnicalAuditRecord: (record: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => void;
   bulkAddTechnicalAuditRecords: (records: Partial<TechnicalAuditRecord>[]) => void;
   bulkUpdateAuditRecordDescriptions: (updates: { id: string; description: string }[]) => Promise<number>;
-  bulkPassToFacturado: (recordIds: string[], numeroFactura: string, fechaFactura: string) => Promise<number>;
+  /** Archiva o desarchiva remitos cobrados en una sola operación. Devuelve cuántos cambiaron. */
+  bulkSetArchived: (recordIds: string[], archived: boolean) => Promise<number>;
+  bulkPassToFacturado: (
+    recordIds: string[],
+    numeroFactura: string,
+    fechaFactura: string,
+    billing?: BillingDetailsInput
+  ) => Promise<number>;
   updateTechnicalAuditRecord: (id: string, updates: Partial<TechnicalAuditRecord>) => void;
   deleteTechnicalAuditRecord: (id: string) => void;
 
@@ -206,10 +227,24 @@ const sortWorkersAlphabetically = (list: WorkerItem[]): WorkerItem[] => {
   return [...list].sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
 };
 
+/** Datos de facturación calculados en el modal "Pasar a Facturado" para el conjunto de remitos. */
+export interface BillingDetailsInput {
+  montoBaseRemitos: number;
+  recargo7Pct: number;
+  subtotalNeto: number;
+  ivaPct: 21 | 10.5;
+  ivaAmount: number;
+  totalFacturado: number;
+}
+
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { users, createUser, updateUser, deleteUser } = useAuth();
+  const { users, createUser, updateUser, deleteUser, currentUser } = useAuth();
+  // El capataz solo carga partes: su sesión no se suscribe a remitos, finanzas, comprobantes ni tarifas.
+  const isFieldRole = currentUser?.role === 'Capataz';
+  const [fieldReports, setFieldReports] = useState<FieldReport[]>([]);
+  const [fieldCatalog, setFieldCatalog] = useState<FieldCatalog | null>(null);
 
   // Production-Ready Default States: Empty collections by default so publishing never re-seeds demo data
   const [financialReports, setFinancialReports] = useState<FinancialMetricRecord[]>(() => {
@@ -277,7 +312,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (Array.isArray(parsed) && parsed.length > 0) return filterAndSort(parsed);
       }
     } catch {}
-    return filterAndSort(INITIAL_WORKERS);
+    // Sin caché local, el personal se muestra vacío hasta que llegue desde Firestore (no se usan datos de ejemplo del código).
+    return [];
   });
 
   const [technicalParameters, setTechnicalParameters] = useState<TechnicalCostParameters>(() => {
@@ -320,7 +356,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem(`${STORAGE_KEY}_vehicles`);
       if (saved) return JSON.parse(saved);
     } catch {}
-    return isSystemZeroStateActive() ? [] : INITIAL_VEHICLES;
+    return [];
   });
 
   const [vehicleEvents, setVehicleEvents] = useState<VehicleEventItem[]>(() => {
@@ -328,12 +364,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem(`${STORAGE_KEY}_vehicle_events`);
       if (saved) return JSON.parse(saved);
     } catch {}
-    return isSystemZeroStateActive() ? [] : INITIAL_VEHICLE_EVENTS;
+    return [];
   });
 
   // Real-time Firestore Cloud Synchronization (Strictly without auto-seeding demo data on publish)
   useEffect(() => {
     let isMounted = true;
+    const noop = () => {};
 
     // 1. System zero-state flag in cloud
     const unsubStatus = subscribeSystemStatus(status => {
@@ -346,7 +383,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 2. Workers synchronization: Cloud-authoritative from Firestore
-    const unsubWorkers = subscribeWorkers(remoteWorkers => {
+    const unsubWorkers = isFieldRole ? noop : subscribeWorkers(remoteWorkers => {
       if (!isMounted) return;
       const { uids: deletedUids, emails: deletedEmails, names: deletedNames } = getDeletedUsersTombstone();
 
@@ -361,16 +398,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (deletedUids.has(w.id) || (em && deletedEmails.has(em)) || (norm && deletedNames.has(norm))) return false;
           return true;
         });
-      } else {
-        // Fallback only if Firestore is completely empty and not zero-state
-        if (!isSystemZeroStateActive()) {
-          activeList = INITIAL_WORKERS.filter(w => {
-            const em = (w.email || '').toLowerCase().trim();
-            const norm = normalizeWorkerName(w.name);
-            return !deletedUids.has(w.id) && !deletedEmails.has(em) && !deletedNames.has(norm);
-          });
-        }
       }
+      // Si Firestore no tiene personal, la lista queda vacía: nunca se rellena con datos de ejemplo del código.
 
       const deduplicated = deduplicateWorkersList(activeList);
       const validWorkers = sortWorkersAlphabetically(
@@ -397,7 +426,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 3. Technical audit records (remitos) synchronization: Reflects exact database state
-    const unsubAudits = subscribeAuditRecords(remoteAudits => {
+    const unsubFieldReports = subscribeFieldReports(
+      remote => { if (isMounted) setFieldReports(remote); },
+      isFieldRole ? currentUser?.authUid : undefined
+    );
+    const unsubCatalog = subscribeFieldCatalog(catalog => { if (isMounted) setFieldCatalog(catalog); });
+    const unsubAudits = isFieldRole ? noop : subscribeAuditRecords(remoteAudits => {
       if (!isMounted) return;
       if (remoteAudits && remoteAudits.length > 0) {
         setTechnicalAuditRecords(remoteAudits);
@@ -405,22 +439,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(remoteAudits));
         } catch {}
       } else {
-        // Fallback: If cloud has no audits yet, check if there are locally stored reports from prior sessions to auto-seed to cloud
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_tech_audits`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setTechnicalAuditRecords(parsed);
-              saveAuditRecordsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
+        // La base es la única fuente de verdad: si está vacía se muestra vacío.
+        // Ya no se reescribe en Firestore lo que haya en la caché del navegador (podía resucitar datos borrados).
+        setTechnicalAuditRecords([]);
+        try { localStorage.removeItem(`${STORAGE_KEY}_tech_audits`); } catch {}
       }
     });
 
     // 4. Clients database synchronization: Reflects exact database state
-    const unsubClients = subscribeClients(remoteClients => {
+    const unsubClients = isFieldRole ? noop : subscribeClients(remoteClients => {
       if (!isMounted) return;
       if (remoteClients && remoteClients.length > 0) {
         setClients(remoteClients);
@@ -428,21 +455,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(`${STORAGE_KEY}_clients`, JSON.stringify(remoteClients));
         } catch {}
       } else {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_clients`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setClients(parsed);
-              saveClientsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
+        setClients([]);
+        try { localStorage.removeItem(`${STORAGE_KEY}_clients`); } catch {}
       }
     });
 
     // 5. Materials in cloud: Reflects exact database state
-    const unsubMaterials = subscribeMaterials(remoteMaterials => {
+    const unsubMaterials = isFieldRole ? noop : subscribeMaterials(remoteMaterials => {
       if (!isMounted) return;
       if (remoteMaterials && remoteMaterials.length > 0) {
         setMaterials(remoteMaterials);
@@ -450,21 +469,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(remoteMaterials));
         } catch {}
       } else {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_materials`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setMaterials(parsed);
-              saveMaterialsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
+        setMaterials([]);
+        try { localStorage.removeItem(`${STORAGE_KEY}_materials`); } catch {}
       }
     });
 
     // 6. Financial reports in cloud
-    const unsubFinancials = subscribeFinancialReports(remoteFinancials => {
+    const unsubFinancials = isFieldRole ? noop : subscribeFinancialReports(remoteFinancials => {
       if (!isMounted) return;
       if (remoteFinancials && remoteFinancials.length > 0) {
         setFinancialReports(remoteFinancials);
@@ -475,7 +486,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 7. Technical Cost Parameters in cloud
-    const unsubParams = subscribeTechnicalParameters(remoteParams => {
+    const unsubParams = isFieldRole ? noop : subscribeTechnicalParameters(remoteParams => {
       if (!isMounted) return;
       if (remoteParams && remoteParams.dieselPrice) {
         setTechnicalParameters(remoteParams);
@@ -486,7 +497,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 8. Archived Receipts in cloud
-    const unsubReceipts = subscribeArchivedReceipts(remoteReceipts => {
+    const unsubReceipts = isFieldRole ? noop : subscribeArchivedReceipts(remoteReceipts => {
       if (!isMounted) return;
       if (remoteReceipts && remoteReceipts.length > 0) {
         setArchivedReceipts(remoteReceipts);
@@ -497,7 +508,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 9. Projects in cloud
-    const unsubProjects = subscribeProjects(remoteProjects => {
+    const unsubProjects = isFieldRole ? noop : subscribeProjects(remoteProjects => {
       if (!isMounted) return;
       if (remoteProjects && remoteProjects.length > 0) {
         setProjects(remoteProjects);
@@ -508,7 +519,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 10. Maintenance Services in cloud
-    const unsubMaintenance = subscribeMaintenanceServices(remoteServices => {
+    const unsubMaintenance = isFieldRole ? noop : subscribeMaintenanceServices(remoteServices => {
       if (!isMounted) return;
       if (remoteServices && remoteServices.length > 0) {
         setMaintenanceServices(remoteServices);
@@ -519,42 +530,30 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 11. Vehicles in cloud
-    const unsubVehicles = subscribeVehicles(remoteVehicles => {
+    const unsubVehicles = isFieldRole ? noop : subscribeVehicles(remoteVehicles => {
       if (!isMounted) return;
       if (remoteVehicles && remoteVehicles.length > 0) {
         setVehicles(remoteVehicles);
         try {
           localStorage.setItem(`${STORAGE_KEY}_vehicles`, JSON.stringify(remoteVehicles));
         } catch {}
-      } else if (!isSystemZeroStateActive()) {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_vehicles`);
-          const toSeed = cached ? JSON.parse(cached) : INITIAL_VEHICLES;
-          if (Array.isArray(toSeed) && toSeed.length > 0) {
-            setVehicles(toSeed);
-            saveVehiclesBatchToFirestore(toSeed).catch(() => {});
-          }
-        } catch {}
+      } else {
+        setVehicles([]);
+        try { localStorage.removeItem(`${STORAGE_KEY}_vehicles`); } catch {}
       }
     });
 
     // 12. Vehicle Events in cloud
-    const unsubVehicleEvents = subscribeVehicleEvents(remoteEvents => {
+    const unsubVehicleEvents = isFieldRole ? noop : subscribeVehicleEvents(remoteEvents => {
       if (!isMounted) return;
       if (remoteEvents && remoteEvents.length > 0) {
         setVehicleEvents(remoteEvents);
         try {
           localStorage.setItem(`${STORAGE_KEY}_vehicle_events`, JSON.stringify(remoteEvents));
         } catch {}
-      } else if (!isSystemZeroStateActive()) {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_vehicle_events`);
-          const toSeed = cached ? JSON.parse(cached) : INITIAL_VEHICLE_EVENTS;
-          if (Array.isArray(toSeed) && toSeed.length > 0) {
-            setVehicleEvents(toSeed);
-            saveVehicleEventsBatchToFirestore(toSeed).catch(() => {});
-          }
-        } catch {}
+      } else {
+        setVehicleEvents([]);
+        try { localStorage.removeItem(`${STORAGE_KEY}_vehicle_events`); } catch {}
       }
     });
 
@@ -572,6 +571,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       unsubMaintenance();
       unsubVehicles();
       unsubVehicleEvents();
+      unsubFieldReports();
+      unsubCatalog();
     };
   }, []);
 
@@ -646,6 +647,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   }, [users]);
 
+  // Catálogo del capataz: lo mantiene al día una sesión administrativa (nunca la del capataz) y solo lleva nombres.
+  useEffect(() => {
+    if (isFieldRole || !currentUser || !['SuperAdmin', 'Owner', 'Gerente', 'Admin'].includes(currentUser.role)) return;
+    if (clients.length === 0 && workers.length === 0 && materials.length === 0) return;
+    const next: FieldCatalog = {
+      clients: clients
+        .map(c => ({ id: c.id, razonSocial: c.razonSocial, fincaLocacion: c.fincaLocacion || '' }))
+        .sort((a, b) => a.razonSocial.localeCompare(b.razonSocial)),
+      workers: workers
+        .filter(w => w.active !== false && !w.isAdministrative && w.category !== 'Administrativo')
+        .map(w => ({ id: w.id, name: w.name, category: w.category }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      materials: materials
+        .map(m => ({ id: m.id, name: m.name, unit: m.unit }))
+        .sort((a, b) => a.name.localeCompare(b.name))
+    };
+    const same = (a: FieldCatalog | null) =>
+      a !== null && JSON.stringify({ c: a.clients, w: a.workers, m: a.materials }) === JSON.stringify({ c: next.clients, w: next.workers, m: next.materials });
+    if (same(fieldCatalog)) return;
+    const timer = window.setTimeout(() => {
+      saveFieldCatalogToFirestore({ ...next, updatedAt: new Date().toISOString() });
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [clients, workers, materials, fieldCatalog, currentUser, isFieldRole]);
+
   // Persist changes
   useEffect(() => {
     try {
@@ -676,6 +702,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Technical Audit Records Actions
+  const addFieldReport: DataContextType['addFieldReport'] = input => {
+    if (!currentUser) return;
+    const report: FieldReport = {
+      ...input,
+      id: `PC-${Date.now().toString(36).toUpperCase()}`,
+      status: 'Pendiente',
+      submittedAt: new Date().toISOString(),
+      submittedByUid: currentUser.uid,
+      submittedByAuthUid: currentUser.authUid || '',
+      submittedByName: currentUser.displayName
+    };
+    setFieldReports(prev => [report, ...prev]);
+    saveFieldReportToFirestore(report);
+  };
+
+  const patchFieldReport = (id: string, patch: Partial<FieldReport>) => {
+    const current = fieldReports.find(r => r.id === id);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    setFieldReports(prev => prev.map(r => (r.id === id ? next : r)));
+    saveFieldReportToFirestore(next);
+  };
+
+  const markFieldReportConverted = (id: string, remitoId: string) =>
+    patchFieldReport(id, {
+      status: 'Convertido',
+      remitoId,
+      convertedByName: currentUser?.displayName,
+      convertedAt: new Date().toISOString()
+    });
+
+  const discardFieldReport = (id: string, reason?: string) =>
+    patchFieldReport(id, { status: 'Descartado', discardReason: reason || undefined, convertedByName: currentUser?.displayName });
+
   const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => {
     const id = `AUD-${Date.now().toString().slice(-4)}`;
     
@@ -1006,9 +1066,70 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return updatedRecords.length;
   };
 
-  const bulkPassToFacturado = async (recordIds: string[], numeroFactura: string, fechaFactura: string): Promise<number> => {
+  const bulkSetArchived = async (recordIds: string[], archived: boolean): Promise<number> => {
     if (recordIds.length === 0) return 0;
     const idSet = new Set(recordIds);
+    const today = new Date().toISOString().split('T')[0];
+
+    // Solo los cobrados se archivan; el estado sigue siendo "Cobrado", por eso los totales no cambian.
+    const changed = technicalAuditRecords
+      .filter(r => idSet.has(r.id) && (archived ? r.status === 'Cobrado' : true) && Boolean(r.archivado) !== archived)
+      .map(r => ({ ...r, archivado: archived, fechaArchivado: archived ? today : '' }));
+    if (changed.length === 0) return 0;
+
+    const byId = new Map(changed.map(r => [r.id, r]));
+    setTechnicalAuditRecords(prev => {
+      const next = prev.map(r => byId.get(r.id) || r);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    await saveAuditRecordsBatchToFirestore(changed);
+    return changed.length;
+  };
+
+  const bulkPassToFacturado = async (
+    recordIds: string[],
+    numeroFactura: string,
+    fechaFactura: string,
+    billing?: BillingDetailsInput
+  ): Promise<number> => {
+    if (recordIds.length === 0) return 0;
+    const idSet = new Set(recordIds);
+
+    // Reparto de los importes del modal entre los remitos, en proporción a su precio base.
+    // El último remito absorbe el redondeo para que la suma coincida exactamente con el total.
+    const billingShares = new Map<string, { base: number; recargo: number; iva: number; total: number }>();
+    if (billing) {
+      const targets = technicalAuditRecords.filter(r => idSet.has(r.id));
+      const weights = targets.map(r => Math.max(0, r.billedPrice && r.billedPrice > 0 ? r.billedPrice : r.suggestedPrice || 0));
+      const weightSum = weights.reduce((a, b) => a + b, 0);
+      const cents = (n: number) => Math.round(n * 100) / 100;
+      const used = { base: 0, recargo: 0, iva: 0, total: 0 };
+      targets.forEach((r, idx) => {
+        const isLast = idx === targets.length - 1;
+        const ratio = weightSum > 0 ? weights[idx] / weightSum : 1 / targets.length;
+        const share = isLast
+          ? {
+              base: cents(billing.montoBaseRemitos - used.base),
+              recargo: cents(billing.recargo7Pct - used.recargo),
+              iva: cents(billing.ivaAmount - used.iva),
+              total: cents(billing.totalFacturado - used.total)
+            }
+          : {
+              base: cents(billing.montoBaseRemitos * ratio),
+              recargo: cents(billing.recargo7Pct * ratio),
+              iva: cents(billing.ivaAmount * ratio),
+              total: cents(billing.totalFacturado * ratio)
+            };
+        used.base += share.base;
+        used.recargo += share.recargo;
+        used.iva += share.iva;
+        used.total += share.total;
+        billingShares.set(r.id, share);
+      });
+    }
 
     let updatedRecords: TechnicalAuditRecord[] = [];
     setTechnicalAuditRecords(prev => {
@@ -1022,6 +1143,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fechaFactura,
             billedPrice: rec.billedPrice && rec.billedPrice > 0 ? rec.billedPrice : (rec.suggestedPrice || 0)
           };
+          // Conserva lo que se ingresó en el modal (base, 7%, IVA y total). No cambia billedPrice.
+          const share = billingShares.get(rec.id);
+          if (billing && share) {
+            updated.montoBaseRemito = share.base;
+            updated.recargo7Pct = share.recargo;
+            updated.ivaPct = billing.ivaPct;
+            updated.ivaAmount = share.iva;
+            updated.totalFacturado = share.total;
+          }
           return updated;
         }
         return rec;
@@ -1797,6 +1927,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const resetAllData = () => {
+    // Carga datos de ejemplo y los escribe en Firestore. Solo existe en la demo:
+    // en producción pisaría personal, vehículos y remitos reales.
+    if (!__DEMO__) {
+      console.warn('[Seguridad] resetAllData está deshabilitado fuera del modo demo.');
+      return;
+    }
     try {
       localStorage.removeItem(ZERO_STATE_KEY);
       localStorage.removeItem(`${STORAGE_KEY}_tech_audits`);
@@ -1887,6 +2023,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Permanently cleans only the initial demo data seeds (e.g. from previous test deployments)
   const clearDemoDataOnly = async () => {
+    // Borra por identificador los registros de ejemplo del código. Solo en la demo:
+    // en producción esos identificadores pueden coincidir con datos reales.
+    if (!__DEMO__) {
+      console.warn('[Seguridad] clearDemoDataOnly está deshabilitado fuera del modo demo.');
+      return;
+    }
     const demoAuditIds = new Set(INITIAL_TECHNICAL_AUDIT_RECORDS.map(r => r.id));
     const demoClientIds = new Set(INITIAL_CLIENTS.map(c => c.id));
     const demoMaterialIds = new Set(INITIAL_MATERIALS.map(m => m.id));
@@ -2023,10 +2165,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addArchivedReceipt,
         deleteArchivedReceipt,
         updateTechnicalParameters,
+        fieldReports,
+        fieldCatalog,
+        addFieldReport,
+        markFieldReportConverted,
+        discardFieldReport,
         addTechnicalAuditRecord,
         bulkAddTechnicalAuditRecords,
         bulkUpdateAuditRecordDescriptions,
         bulkPassToFacturado,
+        bulkSetArchived,
         updateTechnicalAuditRecord,
         deleteTechnicalAuditRecord,
         addFinancialReport,

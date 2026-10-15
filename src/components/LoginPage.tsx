@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { Suspense, useState } from 'react';
 import {
   Shield,
   Lock,
@@ -13,31 +13,50 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import firebaseAppletConfig from '../../firebase-applet-config.json';
+
+// Solo existe en el modo demo; en producción __DEMO__ es false y este módulo no se incluye.
+const DemoLoginHelp = __DEMO__
+  ? React.lazy(() => import('../demo/DemoLoginHelp').then(m => ({ default: m.DemoLoginHelp })))
+  : null;
 
 export const LoginPage: React.FC = () => {
-  const { loginWithCredentials } = useAuth();
+  const { loginWithCredentials, sendPasswordResetEmail, authError } = useAuth();
   const { darkMode, toggleDarkMode } = useTheme();
 
   // Login form state
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [infoMessage, setInfoMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
+    setInfoMessage('');
     setIsLoading(true);
+    const res = await loginWithCredentials(identifier, password);
+    if (!res.success) {
+      setErrorMessage(res.message || 'Credenciales inválidas. Verifique su correo y contraseña.');
+    }
+    setIsLoading(false);
+  };
 
-    setTimeout(() => {
-      const res = loginWithCredentials(identifier, password);
-      if (!res.success) {
-        setErrorMessage(res.message || 'Credenciales inválidas. Verifique su usuario y contraseña asignadas.');
-        setIsLoading(false);
-      }
-    }, 200);
+  const handleForgotPassword = async () => {
+    setErrorMessage('');
+    setInfoMessage('');
+    if (!identifier.includes('@')) {
+      setErrorMessage('Escriba su correo electrónico para enviarle el enlace de restablecimiento.');
+      return;
+    }
+    const res = await sendPasswordResetEmail(identifier);
+    if (res.success) {
+      setInfoMessage('Si el correo está registrado, recibirá un enlace para crear una nueva contraseña.');
+    } else {
+      setErrorMessage(res.message || 'No se pudo enviar el correo de restablecimiento.');
+    }
   };
 
   return (
@@ -91,15 +110,21 @@ export const LoginPage: React.FC = () => {
               Iniciar Sesión
             </h1>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Ingrese su usuario o correo electrónico y su clave de acceso.
+              Ingrese su correo electrónico y su contraseña.
             </p>
           </div>
 
           {/* Error Feedback */}
-          {errorMessage && (
+          {(errorMessage || authError) && (
             <div className="mb-4 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
-              <span className="font-medium leading-tight">{errorMessage}</span>
+              <span className="font-medium leading-tight">{errorMessage || authError}</span>
+            </div>
+          )}
+          {infoMessage && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5 text-emerald-400" />
+              <span className="font-medium leading-tight">{infoMessage}</span>
             </div>
           )}
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -107,75 +132,30 @@ export const LoginPage: React.FC = () => {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-300 block">
-                    Usuario o Correo Electrónico
+                    Correo Electrónico
                   </label>
-                  <span className="text-[10px] text-emerald-400 font-semibold">
-                    Admite @gmail.com
-                  </span>
                 </div>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
-                    type="text"
+                    type="email"
+                    autoComplete="username"
                     required
                     autoFocus
                     value={identifier}
                     onChange={e => setIdentifier(e.target.value)}
-                    placeholder="gastonvillalobos2019@gmail.com o admin@admin.com"
+                    placeholder="nombre@empresa.com"
                     className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-white text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#00c2ff] focus:border-transparent transition-all font-mono"
                   />
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[10px] text-slate-400">Atajos rápidos:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('gastonvillalobos2019@gmail.com');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 font-mono font-bold cursor-pointer border border-cyan-800"
-                  >
-                    Gastón (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('rominabromeo@yahoo.com.ar');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-purple-950/80 hover:bg-purple-900 text-purple-300 font-mono font-bold cursor-pointer border border-purple-800"
-                  >
-                    Romina (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('martin@iipsa.com.ar');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 font-mono font-bold cursor-pointer border border-emerald-800"
-                  >
-                    Martin (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('admin@admin.com');
-                      setPassword('admin');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-mono font-bold cursor-pointer border border-amber-500/40"
-                  >
-                    Juan Pablo (admin)
-                  </button>
                 </div>
               </div>
 
               {/* Password Input */}
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-slate-300 block">
-                  Clave de Acceso
+                  Contraseña
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
@@ -184,9 +164,10 @@ export const LoginPage: React.FC = () => {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    placeholder="123456"
+                    placeholder="Su contraseña"
                     className="w-full pl-10 pr-11 py-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-white text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#00c2ff] focus:border-transparent transition-all font-mono"
                   />
                   <button
@@ -200,17 +181,14 @@ export const LoginPage: React.FC = () => {
                 </div>
               </div>
 
-              {/* Remember Me */}
-              <div className="flex items-center justify-between pt-1">
-                <label className="flex items-center gap-2 text-xs text-slate-400 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={rememberMe}
-                    onChange={e => setRememberMe(e.target.checked)}
-                    className="w-4 h-4 rounded bg-slate-800 border-slate-700 text-[#00c2ff] focus:ring-0 cursor-pointer"
-                  />
-                  <span>Recordar sesión en este equipo</span>
-                </label>
+              <div className="flex items-center justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  className="text-xs text-cyan-400 hover:text-cyan-300 cursor-pointer"
+                >
+                  Olvidé mi contraseña
+                </button>
               </div>
 
               {/* Action Submit Button */}
@@ -233,11 +211,28 @@ export const LoginPage: React.FC = () => {
               </button>
             </form>
 
+          {DemoLoginHelp && (
+            <Suspense fallback={null}>
+              <DemoLoginHelp
+                onPick={(email, pass) => {
+                  setIdentifier(email);
+                  setPassword(pass);
+                }}
+              />
+            </Suspense>
+          )}
+
           {/* Security note */}
           <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-center text-xs text-slate-400 gap-1.5">
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
             <span>Conexión cifrada y base de datos persistente</span>
           </div>
+          {/* Identifica la base en uso: permite detectar de inmediato si la app apunta a otro proyecto */}
+          <p className="mt-2 text-center text-[10px] font-mono text-slate-500 break-all">
+            {__DEMO__
+              ? 'Demo local · sin conexión a la base real'
+              : `Proyecto: ${firebaseAppletConfig.projectId} · Base: ${firebaseAppletConfig.firestoreDatabaseId || '(default)'}`}
+          </p>
 
         </div>
       </main>

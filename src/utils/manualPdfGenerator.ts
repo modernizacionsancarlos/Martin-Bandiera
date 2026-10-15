@@ -1,12 +1,17 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { TechnicalCostParameters } from '../types';
+import { MANUAL_EXTRA_SECTIONS, MANUAL_VERSION, type ManualExtraSection } from './manualExtraSections';
 
 /**
  * Generates a comprehensive, multi-page professional PDF manual of the entire system.
- * Updated to the latest platform version (v2026.9).
+ * La versión y las secciones nuevas salen de manualExtraSections.ts (la misma fuente que la vista interactiva).
  */
-export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParameters): void => {
+const buildManual = (
+  technicalParameters: TechnicalCostParameters | undefined,
+  knownStarts: Record<string, number>
+): { doc: jsPDF; starts: Record<string, number> } => {
+  const starts: Record<string, number> = {};
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -45,7 +50,7 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
 
     doc.setFontSize(7.5);
     doc.setTextColor(100, 116, 139);
-    doc.text(`Versión Oficial v2026.9 · Mendoza, Argentina · Actualizado: ${dateStr}`, 14, 291);
+    doc.text(`Versión Oficial ${MANUAL_VERSION} · Mendoza, Argentina · Actualizado: ${dateStr}`, 14, 291);
     doc.text(`Página ${pageNum} de ${totalPages}`, 196, 291, { align: 'right' });
   };
 
@@ -65,7 +70,7 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.text('VERSIÓN OFICIAL v2026.9', 18, 29.5);
+  doc.text(`VERSIÓN OFICIAL ${MANUAL_VERSION}`, 18, 29.5);
 
   // Logo & Title
   doc.setTextColor(255, 255, 255);
@@ -108,13 +113,14 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
 
   // Table of Contents Box
   doc.setFillColor(30, 41, 59);
-  doc.roundedRect(14, 126, 182, 138, 3, 3, 'F');
+  doc.roundedRect(14, 124, 182, 150, 3, 3, 'F');
 
   doc.setTextColor(0, 194, 255);
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
-  doc.text('ÍNDICE GENERAL Y MÓDULOS DEL SISTEMA', 20, 138);
+  doc.text('ÍNDICE GENERAL Y MÓDULOS DEL SISTEMA', 20, 134);
 
+  const pageOf = (id: string, fallback: string) => (knownStarts[id] ? String(knownStarts[id]) : fallback);
   const indexItems = [
     { num: '1', title: 'Arquitectura General y Flujo Operativo del Negocio', page: '2' },
     { num: '2', title: 'Carga de Reporte de Campo (Remito de Papel vs Sistema, Viajes y Personal)', page: '3' },
@@ -125,30 +131,32 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
     { num: '7', title: 'Base de Clientes, Distancias KM y Fincas del Valle de Uco', page: '8' },
     { num: '8', title: 'Obras, Mantenimiento de Pozos, Stock de Materiales y Finanzas', page: '9' },
     { num: '9', title: 'Gestión de Usuarios, Control RBAC y Baja Definitiva en Base de Datos', page: '10' },
-    { num: '10', title: 'Espacio de Prueba (Sandbox Aislado) y Resolución de Problemas (FAQ)', page: '11' }
+    { num: '10', title: 'Espacio de Prueba (Sandbox Aislado): Paso Seguro a Producción', page: pageOf('sandbox', '11') },
+    ...MANUAL_EXTRA_SECTIONS.map(sec => ({ num: sec.num, title: sec.title, page: pageOf(sec.id, '12') })),
+    { num: '16', title: 'Preguntas Frecuentes y Solución Rápida de Dudas', page: pageOf('faq', '17') }
   ];
 
-  let indexY = 148;
+  let indexY = 143;
   indexItems.forEach(item => {
     doc.setFillColor(15, 23, 42);
-    doc.roundedRect(20, indexY - 4, 10, 7, 1.5, 1.5, 'F');
+    doc.roundedRect(20, indexY - 4, 10, 6, 1.5, 1.5, 'F');
     doc.setTextColor(245, 158, 11);
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'bold');
-    doc.text(item.num, 25, indexY + 1, { align: 'center' });
+    doc.text(item.num, 25, indexY + 0.4, { align: 'center' });
 
     doc.setTextColor(241, 245, 249);
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
-    doc.text(item.title, 34, indexY + 1);
+    doc.text(item.title, 34, indexY + 0.4);
 
     doc.setTextColor(148, 163, 184);
-    doc.text(`Pág. ${item.page}`, 186, indexY + 1, { align: 'right' });
+    doc.text(`Pág. ${item.page}`, 186, indexY + 0.4, { align: 'right' });
 
     doc.setDrawColor(51, 65, 85);
-    doc.line(34, indexY + 4, 186, indexY + 4);
+    doc.line(34, indexY + 2.6, 186, indexY + 2.6);
 
-    indexY += 11;
+    indexY += 8;
   });
 
   // Footer Cover Note
@@ -890,7 +898,7 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
       ['Gerencia / Dirección', 'Total', 'Total', 'Total', 'Lectura/Edición', 'Lectura'],
       ['Administración', 'Total', 'Total', 'Total (Facturar)', 'Lectura', 'Sin Acceso'],
       ['Auditor Técnico', 'Total', 'Total (Aprobar)', 'Lectura', 'Sin Acceso', 'Sin Acceso'],
-      ['Técnico de Campo', 'Solo Carga', 'Lectura Propia', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso'],
+      ['Capataz (app de campo)', 'Parte sin valores', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso'],
       ['Operario / Cuadrilla', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso', 'Sin Acceso']
     ],
     headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
@@ -903,7 +911,7 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
 
   // Elimination instruction (Fix highlight)
   const userSteps =
-    '1. Ve a "Usuarios y Permisos" en la barra lateral.\n2. Localiza al usuario en la tabla y presiona el icono de papelera (Eliminar).\n3. Aparecerá el modal de confirmación con alerta de seguridad. Pulsa "Confirmar Eliminación".\n4. El sistema lo borra de Firestore y registra su identificador en la Lista de Bajas Permanentes (Tombstone Blacklist), garantizando que nunca vuelva a reaparecer aunque se reinicie el navegador.';
+    '1. Ve a "Usuarios y Permisos" en la barra lateral.\n2. Localiza al usuario en la tabla y presiona el icono de papelera (Eliminar).\n3. Aparecerá el modal de confirmación con alerta de seguridad. Pulsa "Confirmar Eliminación".\n4. El sistema borra el perfil, da de baja la cuenta de acceso desde el servidor y registra la baja: el usuario no puede volver a ingresar ni reaparece aunque se reinicie el navegador. El alta, la clave temporal y el restablecimiento de claves están en la sección 14.';
   const splitUserSteps = doc.splitTextToSize(userSteps, 172);
   const userBoxH = 12 + splitUserSteps.length * 4;
 
@@ -922,31 +930,27 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
   doc.text(splitUserSteps, 20, y + 13);
 
   // ==========================================
-  // PÁGINA 11: SANDBOX Y PREGUNTAS FRECUENTES (FAQ)
+  // PÁGINA 11: SANDBOX
   // ==========================================
   doc.addPage();
-  addHeader(11, 11, '10. SANDBOX Y PREGUNTAS FRECUENTES');
+  starts.sandbox = doc.getNumberOfPages();
+  addHeader(0, 0, '10. ESPACIO DE PRUEBA (SANDBOX)');
 
   y = 26;
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('10. Espacio de Prueba (Sandbox) y FAQ', 14, y);
+  doc.text('10. Espacio de Prueba (Sandbox)', 14, y);
 
   y += 6;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(71, 85, 105);
-  doc.text(
-    'Herramientas de simulación y respuestas a las consultas más habituales durante la operación.',
-    14,
-    y
-  );
+  doc.text('Herramientas de simulación para ensayar fórmulas y remitos sin tocar la información real.', 14, y);
   y += 10;
 
-  // Sandbox Explanation Box
   const sandboxText =
-    '• Permite probar cualquier combinación de KM, horas, guardia (monto fijo o por horas), margen editable y cuadrilla.\n• Los remitos creados en el Sandbox NO alteran la base de datos de producción ni las finanzas reales.\n• Simulador en tiempo real: muestra paso a paso cómo impacta cada cambio en el combustible, seguros y M.O.\n• Promover a Producción: Si una orden de prueba resulta correcta, un botón permite promoverla a la base real.';
+    '• Permite probar cualquier combinación de KM, horas, guardia (monto fijo o por horas), margen editable y cuadrilla.\n• Los remitos creados en el Sandbox NO alteran la base de datos de producción ni las finanzas reales; viven solo en ese navegador.\n• Simulador en tiempo real: muestra paso a paso cómo impacta cada cambio en el combustible, seguros y M.O.\n• Escáner con IA: lee la foto de un remito de papel y completa los datos para revisarlos.\n• A Producción: si una orden de prueba resulta correcta, el botón "A Producción" pide confirmación con el detalle, exige elegir un cliente real de la base, la crea con el siguiente número de remito real, recalcula el precio con las tarifas vigentes y la marca "En producción" para que no se cargue dos veces.';
   const splitSandbox = doc.splitTextToSize(sandboxText, 172);
   const sandboxH = 12 + splitSandbox.length * 4;
 
@@ -964,7 +968,147 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
   doc.setTextColor(120, 53, 15);
   doc.text(splitSandbox, 20, y + 13);
 
-  y += sandboxH + 6;
+  // ==========================================
+  // SECCIONES 11 A 15: FUNCIONES NUEVAS
+  // ==========================================
+  const NOTE_COLORS = {
+    info: { fill: [236, 254, 255], draw: [103, 232, 249], title: [14, 116, 144], text: [22, 78, 99] },
+    warn: { fill: [254, 243, 199], draw: [245, 158, 11], title: [180, 83, 9], text: [120, 53, 15] },
+    ok: { fill: [236, 253, 245], draw: [52, 211, 153], title: [4, 120, 87], text: [6, 78, 59] }
+  } as const;
+  const SHORT: Record<string, string> = {
+    'panel-estado': '11. PANEL DE ESTADO Y ARCHIVO',
+    'app-campo': '12. APP DEL CAPATAZ',
+    canales: '13. WHATSAPP Y DRIVE',
+    'usuarios-claves': '14. USUARIOS Y CLAVES',
+    respaldos: '15. RESPALDOS Y SEGURIDAD'
+  };
+
+  const renderExtraSection = (section: ManualExtraSection) => {
+    doc.addPage();
+    starts[section.id] = doc.getNumberOfPages();
+    const header = SHORT[section.id] || section.title.toUpperCase();
+    addHeader(0, 0, header);
+    let cy = 26;
+
+    const ensure = (h: number) => {
+      if (cy + h > 278) {
+        doc.addPage();
+        addHeader(0, 0, header + ' (cont.)');
+        cy = 24;
+      }
+    };
+
+    doc.setTextColor(15, 23, 42);
+    doc.setFontSize(15);
+    doc.setFont('helvetica', 'bold');
+    const titleLines = doc.splitTextToSize(`${section.num}. ${section.title}`, 182);
+    doc.text(titleLines, 14, cy);
+    cy += titleLines.length * 6.5;
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(71, 85, 105);
+    doc.text(section.subtitle, 14, cy);
+    cy += 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(4, 120, 87);
+    doc.text(`[${section.badge}]  Estado: ${section.status}`, 14, cy);
+    cy += 8;
+
+    section.blocks.forEach(block => {
+      if (block.type === 'p') {
+        const lines = doc.splitTextToSize(block.text, 182);
+        ensure(lines.length * 4 + 3);
+        doc.setTextColor(51, 65, 85);
+        doc.setFontSize(8.5);
+        doc.setFont('helvetica', 'normal');
+        doc.text(lines, 14, cy);
+        cy += lines.length * 4 + 3;
+      } else if (block.type === 'steps' || block.type === 'bullets') {
+        if (block.title) {
+          ensure(10);
+          doc.setTextColor(15, 23, 42);
+          doc.setFontSize(9.5);
+          doc.setFont('helvetica', 'bold');
+          doc.text(block.title.toUpperCase(), 14, cy);
+          cy += 5.5;
+        }
+        block.items.forEach((item, i) => {
+          const lines = doc.splitTextToSize(item, 170);
+          ensure(lines.length * 3.9 + 1.5);
+          doc.setTextColor(0, 150, 200);
+          doc.setFontSize(8.5);
+          doc.setFont('helvetica', 'bold');
+          doc.text(block.type === 'steps' ? `${i + 1}.` : '•', 15, cy);
+          doc.setTextColor(51, 65, 85);
+          doc.setFont('helvetica', 'normal');
+          doc.text(lines, 22, cy);
+          cy += lines.length * 3.9 + 1.5;
+        });
+        cy += 3;
+      } else if (block.type === 'table') {
+        ensure(14 + block.rows.length * 8);
+        if (block.title) {
+          doc.setTextColor(15, 23, 42);
+          doc.setFontSize(9.5);
+          doc.setFont('helvetica', 'bold');
+          doc.text(block.title.toUpperCase(), 14, cy);
+          cy += 3;
+        }
+        autoTable(doc, {
+          startY: cy,
+          head: [block.head],
+          body: block.rows,
+          headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8 },
+          bodyStyles: { fontSize: 8, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          margin: { left: 14, right: 14 }
+        });
+        cy = (doc as any).lastAutoTable.finalY + 6;
+      } else {
+        const colors = NOTE_COLORS[block.tone];
+        const lines = doc.splitTextToSize(block.text, 172);
+        const h = 12 + lines.length * 3.9;
+        ensure(h + 3);
+        doc.setFillColor(colors.fill[0], colors.fill[1], colors.fill[2]);
+        doc.setDrawColor(colors.draw[0], colors.draw[1], colors.draw[2]);
+        doc.roundedRect(14, cy, 182, h, 2, 2, 'FD');
+        doc.setTextColor(colors.title[0], colors.title[1], colors.title[2]);
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'bold');
+        doc.text(block.title.toUpperCase(), 20, cy + 7);
+        doc.setTextColor(colors.text[0], colors.text[1], colors.text[2]);
+        doc.setFontSize(8);
+        doc.setFont('helvetica', 'normal');
+        doc.text(lines, 20, cy + 12);
+        cy += h + 4;
+      }
+    });
+  };
+
+  MANUAL_EXTRA_SECTIONS.forEach(renderExtraSection);
+
+  // ==========================================
+  // PREGUNTAS FRECUENTES (FAQ)
+  // ==========================================
+  doc.addPage();
+  starts.faq = doc.getNumberOfPages();
+  addHeader(0, 0, '16. PREGUNTAS FRECUENTES');
+
+  y = 26;
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('16. Preguntas Frecuentes', 14, y);
+
+  y += 6;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Respuestas a las consultas más habituales durante la operación.', 14, y);
+  y += 10;
 
   // FAQ
   doc.setTextColor(15, 23, 42);
@@ -984,7 +1128,23 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
     },
     {
       q: '¿Qué hago si se cae la conexión a internet en la finca?',
-      a: 'El sistema funciona en modo Offline-First con almacenamiento en caché local. Al recuperar cobertura en la ruta o ciudad, sincroniza los cambios con la base central automáticamente.'
+      a: 'Hoy el sistema necesita conexión para guardar: el indicador inferior muestra "Sin conexión" y cuántos cambios quedan sin sincronizar, y avisa antes de cerrar la pestaña. La carga sin conexión es parte de la aplicación instalable del capataz para Android, que está planificada (sección 12).'
+    },
+    {
+      q: '¿El capataz puede ver precios o costos?',
+      a: 'No. La aplicación del capataz solo permite cargar partes de campo y su sesión no recibe precios, tarifas, costos, sueldos ni remitos. Administración calcula los valores al convertir el parte en remito (sección 12).'
+    },
+    {
+      q: '¿Qué hago si un usuario olvidó su contraseña o no tiene correo?',
+      a: 'En "Usuarios y Permisos" presioná "Restablecer clave": se genera una clave temporal que se muestra una sola vez. Entregásela al usuario; deberá elegir una propia al ingresar (sección 14).'
+    },
+    {
+      q: '¿Dónde están los remitos cobrados que archivé?',
+      a: 'Siguen en Auditoría Técnica: salen de las listas de trabajo pero siempre aparecen en la búsqueda y con el filtro "Archivado". Se pueden desarchivar y salen en la exportación a Excel (sección 11).'
+    },
+    {
+      q: '¿Por qué un parte que llegó por foto dice "Revisar antes de convertir"?',
+      a: 'Porque la lectura de letra manuscrita puede equivocarse. El sistema marca lo que no pudo confirmar para que una persona lo verifique contra la foto antes de crear el remito (sección 13).'
     }
   ];
 
@@ -1016,7 +1176,32 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
   doc.setFontSize(8);
   doc.text('--- Fin del Manual Oficial de Usuario · JOB Martin Bandiera ---', 105, 275, { align: 'center' });
 
-  // Save/Download PDF
-  const filename = `JOB_Martin_Bandiera_Manual_de_Uso_v2026.9_${new Date().toISOString().split('T')[0]}.pdf`;
-  doc.save(filename);
+  // Pies de página con la numeración real (las páginas se agregan según el contenido).
+  const total = doc.getNumberOfPages();
+  for (let page = 2; page <= total; page++) {
+    doc.setPage(page);
+    doc.setFillColor(248, 250, 252);
+    doc.rect(0, 285, 210, 12, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.line(0, 285, 210, 285);
+    doc.setFontSize(7.5);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(100, 116, 139);
+    doc.text(`Versión Oficial ${MANUAL_VERSION} · Mendoza, Argentina · Actualizado: ${dateStr}`, 14, 291);
+    doc.text(`Página ${page} de ${total}`, 196, 291, { align: 'right' });
+  }
+
+  return { doc, starts };
+};
+
+/** Arma el manual dos veces: la primera para saber en qué página cae cada sección del índice. */
+export const buildSystemManualDoc = (technicalParameters?: TechnicalCostParameters): jsPDF => {
+  const { starts } = buildManual(technicalParameters, {});
+  return buildManual(technicalParameters, starts).doc;
+};
+
+/** Genera y descarga el manual. */
+export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParameters): void => {
+  const filename = `JOB_Martin_Bandiera_Manual_de_Uso_${MANUAL_VERSION}_${new Date().toISOString().split('T')[0]}.pdf`;
+  buildSystemManualDoc(technicalParameters).save(filename);
 };

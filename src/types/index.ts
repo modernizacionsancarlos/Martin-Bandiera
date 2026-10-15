@@ -25,10 +25,14 @@ export interface UserProfile {
   role: UserRole;
   category?: WorkerCategory;
   isAdministrative?: boolean;
-  tenantId: string;
+  /** @deprecated El sistema es de un único cliente; ya no se usa para aislar datos. */
+  tenantId?: string;
   companyName: string;
   avatarUrl?: string;
   phone?: string;
+  /** UID de la cuenta de Firebase Auth vinculada a este perfil. */
+  authUid?: string;
+  /** @deprecated Las contraseñas viven en Firebase Auth. Solo se lee en datos antiguos. */
   password?: string;
   specialty?: string;
   cargo?: string;
@@ -257,6 +261,11 @@ export interface TechnicalAuditRecord {
   paymentMethods?: PaymentEntry[];
   fechaCobro?: string;
 
+  // Archivo: paso posterior a Cobrado. El estado sigue siendo "Cobrado" (los totales no cambian);
+  // un remito archivado sale de las listas de trabajo pero siempre aparece en la búsqueda.
+  archivado?: boolean;
+  fechaArchivado?: string; // YYYY-MM-DD
+
   // Ganancia Capataz (calculada estrictamente sobre Costo de Servicio / M.O.)
   capatazCommissionPct?: number; // e.g. 10
   capatazProfit?: number;        // laborDirectCost * pct
@@ -385,3 +394,71 @@ export interface VehicleItem {
   updatedAt?: string;
 }
 
+
+/**
+ * Parte de campo: lo que carga el capataz en la finca. Solo hechos (horas, personal, materiales, descripción, firma);
+ * nunca lleva precios ni costos. Administración o Gerencia lo convierte en un remito (`TechnicalAuditRecord`),
+ * donde recién se calculan los valores.
+ */
+export type FieldReportStatus = 'Pendiente' | 'Convertido' | 'Descartado';
+
+export interface FieldReportMaterial {
+  name: string;
+  qty: number;
+}
+
+export interface FieldReportCrewMember {
+  name: string;
+  role: 'Oficial' | 'Ayudante';
+}
+
+export interface FieldReport {
+  id: string;
+  date: string;              // YYYY-MM-DD
+  clientName: string;
+  siteLocation: string;
+  workPoint: string;
+  isGuardia: boolean;
+  horaEntrada: string;
+  horaSalida: string;
+  viajes: number;
+  crew: FieldReportCrewMember[];
+  materials: FieldReportMaterial[];
+  description: string;
+  signatureUrl?: string;
+  submittedByUid: string;
+  /** UID de Firebase Auth de quien cargó el parte; las reglas de Firestore lo usan para que cada capataz lea solo los suyos. */
+  submittedByAuthUid: string;
+  submittedByName: string;  // capataz responsable
+  submittedAt: string;      // ISO
+  status: FieldReportStatus;
+  remitoId?: string;         // remito generado
+  convertedByName?: string;
+  convertedAt?: string;
+  discardReason?: string;
+  /** Canal por el que llegó el parte. Sin valor = cargado desde la app del capataz. */
+  origen?: 'app' | 'whatsapp' | 'drive';
+  /** Número del remito de papel, si la lectura de la foto lo encontró. */
+  remitoPapel?: string;
+  /** Foto del remito de papel: en la demo, una imagen embebida; en producción, la ruta en Cloud Storage (`imagePath`). */
+  imageUrl?: string;
+  imagePath?: string;
+  /** Claridad de la lectura de la foto, de 0 a 100. */
+  confianza?: number;
+  /** Datos que la lectura automática no pudo confirmar y que administración debe revisar. */
+  revisar?: string[];
+  /** Identificador del mensaje o archivo de origen (evita cargar dos veces la misma foto). */
+  sourceRef?: string;
+}
+
+/**
+ * Catálogo para el capataz: nombres sin ningún valor (sin tarifas, precios ni CUIT).
+ * Lo mantiene al día la sesión de un administrador a partir de clientes, personal y materiales;
+ * el capataz solo lee este documento (`catalogoCampo/actual`).
+ */
+export interface FieldCatalog {
+  clients: { id: string; razonSocial: string; fincaLocacion: string }[];
+  workers: { id: string; name: string; category?: string }[];
+  materials: { id: string; name: string; unit?: string }[];
+  updatedAt?: string;
+}

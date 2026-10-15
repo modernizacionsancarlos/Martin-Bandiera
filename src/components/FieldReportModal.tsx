@@ -30,6 +30,10 @@ interface FieldReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   recordToEdit?: TechnicalAuditRecord | null;
+  /** Datos de un parte de campo para precargar un remito nuevo (se revisa y se guarda como remito). */
+  prefill?: Partial<TechnicalAuditRecord> | null;
+  /** Se llama con el número de remito creado, después de guardar. */
+  onSaved?: (remitoId: string) => void;
 }
 
 interface JornadaItem {
@@ -39,7 +43,10 @@ interface JornadaItem {
   viajes: number;
 }
 
-export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onClose, recordToEdit }) => {
+export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onClose, recordToEdit: recordToEditProp, prefill, onSaved }) => {
+  // Un parte de campo precarga el formulario igual que una edición, pero al guardar crea un remito nuevo.
+  const recordToEdit = recordToEditProp ?? ((prefill as TechnicalAuditRecord | null | undefined) ?? null);
+  const isEditing = Boolean(recordToEditProp);
   const { workers, materials, technicalParameters, technicalAuditRecords, addTechnicalAuditRecord, updateTechnicalAuditRecord, clients } = useData();
   const { currentUser, users, createUser } = useAuth();
 
@@ -48,7 +55,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     const m = r.remitoId.match(/#?(\d+)-2026/);
     return m ? Math.max(max, parseInt(m[1], 10)) : max;
   }, 379) + 1;
-  const currentRemitoId = recordToEdit ? recordToEdit.remitoId : `#${nextRemitoNum}-2026`;
+  const currentRemitoId = isEditing ? recordToEdit!.remitoId : `#${nextRemitoNum}-2026`;
 
   // 1. CONFIGURACIÓN INICIAL
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -656,7 +663,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     const effectiveCapatazProfit = isLeadTechCapataz ? estimatedCapatazProfit : undefined;
     const effectiveHonorarios = effectiveMarginValue;
 
-    if (recordToEdit) {
+    if (isEditing && recordToEdit) {
       updateTechnicalAuditRecord(recordToEdit.id, {
         remitoPapel: remitoPapel.trim() || undefined,
         date,
@@ -742,6 +749,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       });
     }
 
+    onSaved?.(currentRemitoId);
     onClose();
   };
 
@@ -755,10 +763,10 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         <div className="bg-[#00c2ff] px-6 py-4 flex items-center justify-between shadow-md shrink-0">
           <div>
             <h2 className="text-xl sm:text-2xl font-black italic tracking-wide text-white drop-shadow-xs">
-              {recordToEdit ? 'EDITAR REGISTRO DE CAMPO' : 'REGISTRO DE CAMPO'}
+              {isEditing ? 'EDITAR REGISTRO DE CAMPO' : prefill ? 'CONVERTIR PARTE EN REMITO' : 'REGISTRO DE CAMPO'}
             </h2>
             <p className="text-white/80 text-[11px] font-medium hidden sm:block">
-              {recordToEdit
+              {isEditing
                 ? `Modificación integral de todos los campos del remito ${recordToEdit.remitoId}`
                 : 'Parte diario operativo, cuadrilla técnica y costos en tiempo real'}
             </p>
@@ -2001,7 +2009,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
               type="submit"
               className="w-full py-4 rounded-full bg-[#00c2ff] hover:brightness-105 active:scale-[0.99] text-white font-black italic uppercase tracking-wider text-sm sm:text-base shadow-xl shadow-cyan-500/25 transition-all cursor-pointer flex items-center justify-center gap-2"
             >
-              {recordToEdit ? 'GUARDAR CAMBIOS DEL REPORTE TÉCNICO' : 'FINALIZAR REPORTE TÉCNICO'}
+              {isEditing ? 'GUARDAR CAMBIOS DEL REPORTE TÉCNICO' : 'FINALIZAR REPORTE TÉCNICO'}
             </button>
           </div>
         </form>

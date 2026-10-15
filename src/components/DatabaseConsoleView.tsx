@@ -142,10 +142,10 @@ export const DatabaseConsoleView: React.FC = () => {
     currentUser,
     users,
     createUser,
+    createUserAccount,
     updateUser,
     deleteUser,
-    replaceUsersList,
-    loginAsUser
+    replaceUsersList
   } = useAuth();
 
   const {
@@ -165,7 +165,6 @@ export const DatabaseConsoleView: React.FC = () => {
   const [selectedTable, setSelectedTable] = useState<DatabaseTableKey>('users');
   const [viewFormat, setViewFormat] = useState<'table' | 'json'>('table');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showPasswords, setShowPasswords] = useState(true);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Edit / Inspect Modal
@@ -179,7 +178,7 @@ export const DatabaseConsoleView: React.FC = () => {
   const [quickUserForm, setQuickUserForm] = useState({
     displayName: '',
     email: '',
-    password: '123456',
+    password: '',
     role: 'Capataz' as UserRole,
     phone: '',
     specialty: '',
@@ -318,32 +317,39 @@ export const DatabaseConsoleView: React.FC = () => {
   };
 
   // Quick create user form
-  const handleQuickCreateUser = (e: React.FormEvent) => {
+  const handleQuickCreateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickUserForm.email || !quickUserForm.email.includes('@')) {
       alert('Por favor ingrese un correo válido.');
       return;
     }
 
-    createUser({
+    const result = await createUserAccount({
       displayName: quickUserForm.displayName.trim() || quickUserForm.email.split('@')[0],
       email: quickUserForm.email.trim().toLowerCase(),
-      password: quickUserForm.password.trim() || '123456',
       role: quickUserForm.role,
       phone: quickUserForm.phone.trim(),
       specialty: quickUserForm.specialty.trim(),
       cuadrilla: quickUserForm.cuadrilla.trim(),
       active: quickUserForm.active,
-      tenantId: 'tenant_bandiera_hq',
       companyName: 'JOB Martin Bandiera S.A.'
-    });
+    }, quickUserForm.password);
 
-    showToast(`Usuario ${quickUserForm.email} vinculado directamente a la BD.`);
+    if (!result.success) {
+      alert(result.message || 'No se pudo crear la cuenta de acceso.');
+      return;
+    }
+
+    showToast(
+      result.temporaryPassword
+        ? `Usuario ${quickUserForm.email} creado. Contraseña temporal: ${result.temporaryPassword} (entréguela ahora; no se podrá volver a ver).`
+        : `Usuario ${quickUserForm.email} creado.`
+    );
     setQuickUserModal(false);
     setQuickUserForm({
       displayName: '',
       email: '',
-      password: '123456',
+      password: '',
       role: 'Capataz',
       phone: '',
       specialty: '',
@@ -573,17 +579,6 @@ export const DatabaseConsoleView: React.FC = () => {
 
         {/* Right: Toggles & Stats */}
         <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
-          {selectedTable === 'users' && (
-            <button
-              onClick={() => setShowPasswords(!showPasswords)}
-              className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5 cursor-pointer hover:bg-slate-200"
-              title="Mostrar u ocultar claves en texto plano para auditoría"
-            >
-              {showPasswords ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-              <span>{showPasswords ? 'Ocultar Claves' : 'Ver Claves'}</span>
-            </button>
-          )}
-
           {/* Table / JSON Format Toggle */}
           <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
             <button
@@ -652,7 +647,6 @@ export const DatabaseConsoleView: React.FC = () => {
                   <th className="px-4 py-3">Usuario / Nombre</th>
                   <th className="px-4 py-3">Correo Electrónico</th>
                   <th className="px-4 py-3">Rol Jerárquico</th>
-                  <th className="px-4 py-3">Clave de Acceso (PIN)</th>
                   <th className="px-4 py-3">Estado</th>
                   <th className="px-4 py-3 text-right">Acciones Directas</th>
                 </tr>
@@ -660,7 +654,6 @@ export const DatabaseConsoleView: React.FC = () => {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
                 {filteredRecords.map((u: UserProfile) => {
                   const isCurrent = currentUser?.uid === u.uid;
-                  const pass = u.password || '123456';
 
                   return (
                     <tr
@@ -725,27 +718,6 @@ export const DatabaseConsoleView: React.FC = () => {
                         </span>
                       </td>
 
-                      {/* Password */}
-                      <td className="px-4 py-3 font-mono">
-                        <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800/80 px-2 py-1 rounded-lg w-fit border border-slate-200 dark:border-slate-700">
-                          <KeyRound className="w-3 h-3 text-slate-400" />
-                          <span className="text-slate-900 dark:text-emerald-400 font-bold tracking-wider">
-                            {showPasswords ? pass : '••••••••'}
-                          </span>
-                          <button
-                            onClick={() => copyToClipboard(pass, `pass_${u.uid}`)}
-                            className="text-slate-400 hover:text-slate-600 ml-1"
-                            title="Copiar clave"
-                          >
-                            {copiedKey === `pass_${u.uid}` ? (
-                              <Check className="w-3 h-3 text-emerald-500" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-
                       {/* Status */}
                       <td className="px-4 py-3">
                         <span
@@ -767,17 +739,6 @@ export const DatabaseConsoleView: React.FC = () => {
                       {/* Actions */}
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          {/* Login As Button */}
-                          <button
-                            onClick={() => {
-                              loginAsUser(u);
-                              showToast(`Sesión cambiada a ${u.displayName} (${u.role})`);
-                            }}
-                            className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-emerald-500 hover:text-white text-slate-600 dark:text-slate-300 transition cursor-pointer"
-                            title="Iniciar sesión directamente como este usuario"
-                          >
-                            <LogIn className="w-3.5 h-3.5" />
-                          </button>
 
                           {/* Edit JSON Record */}
                           <button
@@ -981,17 +942,16 @@ export const DatabaseConsoleView: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Contraseña / PIN de Acceso *
+                    Contraseña inicial
                   </label>
                   <input
                     type="text"
-                    required
                     value={quickUserForm.password}
                     onChange={e => setQuickUserForm({ ...quickUserForm, password: e.target.value })}
-                    placeholder="123456"
+                    placeholder="Mínimo 6 caracteres"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:border-purple-500 font-mono font-bold"
                   />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">Por defecto: 123456</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">Vacío = se genera una temporal</span>
                 </div>
 
                 <div>

@@ -45,18 +45,19 @@ export const UserManagementView: React.FC = () => {
   const {
     currentUser,
     users,
-    createUser,
+    createUserAccount,
+    resetUserPassword,
     updateUser,
     deleteUser,
     changeUserRole,
     toggleUserStatus,
     resetUsersToDefaults,
-    loginAsUser,
     isSuperAdmin,
     canManageUsers
   } = useAuth();
   const { workers } = useData();
 
+  const [tempPasswordInfo, setTempPasswordInfo] = useState<{ name: string; email: string; password: string; created: boolean } | null>(null);
   const [activeSubTab, setActiveSubTab] = useState<'usuarios' | 'matriz'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<string>('all');
@@ -165,7 +166,7 @@ export const UserManagementView: React.FC = () => {
       role: user.role,
       specialty: user.specialty || '',
       cuadrilla: user.cuadrilla || '',
-      password: user.password || '',
+      password: '',
       active: user.active !== false,
       customPermissions: getEffectivePermissions(user)
     });
@@ -239,7 +240,7 @@ export const UserManagementView: React.FC = () => {
     setUserPermissionsDraft(updated);
   };
 
-  const handleSaveUser = (e: React.FormEvent) => {
+  const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.displayName.trim()) {
       setFormError('El nombre y apellido es obligatorio.');
@@ -256,7 +257,6 @@ export const UserManagementView: React.FC = () => {
       : formData.customPermissions;
 
     if (editingUserId) {
-      const targetPassword = (formData.password && formData.password.trim()) || '123456';
       updateUser(editingUserId, {
         displayName: formData.displayName.trim(),
         email: formData.email.trim().toLowerCase(),
@@ -266,7 +266,6 @@ export const UserManagementView: React.FC = () => {
         category: isAdmRole ? 'Administrativo' : undefined,
         specialty: formData.specialty.trim(),
         cuadrilla: formData.cuadrilla.trim(),
-        password: targetPassword,
         active: formData.active,
         customPermissions: effectivePermissions
       });
@@ -287,8 +286,7 @@ export const UserManagementView: React.FC = () => {
         w => (w.email && w.email.toLowerCase().trim() === cleanEmail) ||
              (normName && normalizeWorkerName(w.name) === normName)
       );
-      const createdPass = formData.password ? formData.password.trim() : '123456';
-      createUser({
+      const result = await createUserAccount({
         uid: matchingWorker?.id,
         displayName: formData.displayName.trim(),
         email: cleanEmail,
@@ -298,13 +296,19 @@ export const UserManagementView: React.FC = () => {
         category: isAdmRole ? 'Administrativo' : undefined,
         specialty: formData.specialty.trim(),
         cuadrilla: formData.cuadrilla.trim(),
-        password: createdPass,
         active: formData.active,
         customPermissions: effectivePermissions,
-        tenantId: 'tenant_bandiera_hq',
         companyName: 'JOB Martin Bandiera S.A.'
       });
-      showToast(`Usuario creado en BD con permisos: ${cleanEmail} | Clave: ${createdPass}`);
+      if (!result.success) {
+        setFormError(result.message || 'No se pudo crear la cuenta de acceso.');
+        return;
+      }
+      if (result.temporaryPassword) {
+        setTempPasswordInfo({ name: formData.displayName.trim(), email: cleanEmail, password: result.temporaryPassword, created: true });
+      } else {
+        showToast(`Usuario creado: ${cleanEmail}.`);
+      }
     }
 
     setIsModalOpen(false);
@@ -332,6 +336,42 @@ export const UserManagementView: React.FC = () => {
   return (
     <div className="space-y-6 pb-12 animate-in fade-in duration-300">
       
+      {/* Clave temporal: se muestra una sola vez */}
+      {tempPasswordInfo && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="temp-password-title">
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-2xl space-y-4">
+            <h2 id="temp-password-title" className="text-lg font-black text-slate-900 dark:text-white">
+              {tempPasswordInfo.created ? 'Usuario creado' : 'Clave restablecida'}
+            </h2>
+            <p className="text-sm text-slate-600 dark:text-slate-300">
+              Entregue esta contraseña temporal a <strong>{tempPasswordInfo.name}</strong> ({tempPasswordInfo.email}). Deberá cambiarla al ingresar.
+            </p>
+            <div className="px-4 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 font-mono text-xl font-black tracking-wider text-center select-all text-slate-900 dark:text-white">
+              {tempPasswordInfo.password}
+            </div>
+            <p className="text-xs font-bold text-amber-600 dark:text-amber-400">
+              No se vuelve a mostrar. Si se pierde, restablezca la clave de nuevo.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard?.writeText(tempPasswordInfo.password).then(() => showToast('Contraseña copiada.')).catch(() => {})}
+                className="flex-1 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-black text-slate-700 dark:text-slate-200 cursor-pointer"
+              >
+                Copiar
+              </button>
+              <button
+                type="button"
+                onClick={() => setTempPasswordInfo(null)}
+                className="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-sm font-black cursor-pointer"
+              >
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {successToast && (
         <div className="fixed bottom-6 right-6 z-50 bg-emerald-600 text-white px-5 py-3 rounded-2xl shadow-xl flex items-center gap-3 animate-in slide-in-from-bottom duration-200">
@@ -511,9 +551,8 @@ export const UserManagementView: React.FC = () => {
                     <th className="py-3.5 px-4 text-center">Permisos (RBAC)</th>
                     <th className="py-3.5 px-4">Especialidad / Cuadrilla</th>
                     <th className="py-3.5 px-4">Contacto</th>
-                    <th className="py-3.5 px-4">Clave / PIN</th>
+                    <th className="py-3.5 px-4">Acceso</th>
                     <th className="py-3.5 px-4 text-center">Estado</th>
-                    <th className="py-3.5 px-4 text-center">Simular Sesión</th>
                     <th className="py-3.5 px-4 text-right">Acciones</th>
                   </tr>
                 </thead>
@@ -635,25 +674,24 @@ export const UserManagementView: React.FC = () => {
                             )}
                           </td>
 
-                          {/* Credentials / Key */}
-                          <td className="py-3.5 px-4 font-mono text-[11px]">
-                            <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg w-fit border border-slate-200 dark:border-slate-700">
+                          {/* Acceso: la contraseña vive en Firebase Auth y no se puede ver */}
+                          <td className="py-3.5 px-4 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                const res = await resetUserPassword(user.uid);
+                                if (res.success && res.temporaryPassword) {
+                                  setTempPasswordInfo({ name: user.displayName, email: user.email, password: res.temporaryPassword, created: false });
+                                } else {
+                                  showToast(res.message || 'No se pudo restablecer la clave.');
+                                }
+                              }}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                              title="Genera una clave temporal nueva; el usuario deberá cambiarla al ingresar"
+                            >
                               <KeyRound className="w-3 h-3 text-slate-400" />
-                              <span className="font-bold text-slate-800 dark:text-emerald-400">
-                                {user.password || '123456'}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  navigator.clipboard.writeText(user.password || '123456');
-                                  showToast('Clave copiada');
-                                }}
-                                className="text-slate-400 hover:text-slate-700 dark:hover:text-white ml-1 cursor-pointer"
-                                title="Copiar clave"
-                              >
-                                <Copy className="w-3 h-3" />
-                              </button>
-                            </div>
+                              <span>Restablecer clave</span>
+                            </button>
                           </td>
 
                           {/* Status */}
@@ -674,26 +712,6 @@ export const UserManagementView: React.FC = () => {
                                 }`}
                               />
                               <span>{user.active !== false ? 'Activo' : 'Inactivo'}</span>
-                            </button>
-                          </td>
-
-                          {/* Quick Switch */}
-                          <td className="py-3.5 px-4 text-center">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                loginAsUser(user);
-                                showToast(`Sesión cambiada a ${user.displayName} (${user.role})`);
-                              }}
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-black transition cursor-pointer ${
-                                isCurrentSession
-                                  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/60 dark:text-purple-300 cursor-default'
-                                  : 'bg-slate-100 hover:bg-purple-600 hover:text-white dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                              }`}
-                              title={`Cambiar a sesión de ${user.displayName} para probar permisos de ${user.role}`}
-                            >
-                              <UserCheck className="w-3.5 h-3.5" />
-                              <span>{isCurrentSession ? 'En uso' : 'Probar'}</span>
                             </button>
                           </td>
 
@@ -1068,43 +1086,11 @@ export const UserManagementView: React.FC = () => {
                     </div>
                   </div>
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block font-bold text-slate-700 dark:text-slate-300">
-                        Contraseña o PIN de Acceso
-                      </label>
-                      <span className="text-[10px] text-slate-400">
-                        Clave activa para login
-                      </span>
-                    </div>
-                    <div className="relative">
-                      <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="text"
-                        value={formData.password}
-                        onChange={e => setFormData({ ...formData, password: e.target.value })}
-                        placeholder="Clave numérica o contraseña (por defecto: 123456)"
-                        className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono focus:outline-none focus:border-purple-500 font-bold"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <span className="text-[10px] text-slate-400">Atajos de clave:</span>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, password: '123456' })}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 font-mono font-bold cursor-pointer"
-                      >
-                        123456
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, password: 'admin' })}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-600 dark:text-amber-400 font-mono font-bold cursor-pointer"
-                      >
-                        admin
-                      </button>
-                    </div>
-                  </div>
+                  {!editingUserId && (
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                      Al crear la cuenta se genera una contraseña temporal. Se la mostramos una sola vez para que se la entregue al usuario, que deberá elegir una propia al ingresar.
+                    </p>
+                  )}
 
                   {/* Active Switch */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
