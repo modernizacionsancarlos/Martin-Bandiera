@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Backups locales de Firestore (contienen datos sensibles)
+backups/
+
+# Claves de cuentas de servicio
+*service-account*.json
+*-firebase-adminsdk-*.json

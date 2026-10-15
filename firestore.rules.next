@@ -1,0 +1,168 @@
+rules_version = '2';
+
+// Reglas de acceso del sistema JOB Martin Bandiera (cliente único).
+//
+// El rol de cada cuenta de Firebase Auth se lee de /userRoles/{authUid}, un documento
+// que solo puede escribir un administrador. Las cuentas sin documento, o con
+// active == false, no pueden leer ni escribir nada.
+//
+// Roles administrativos: SuperAdmin, Owner, Gerente, Admin.
+// Capataz (personal de campo): NO lee remitos, finanzas, tarifas, personal ni clientes con CUIT.
+// Solo lee su propio perfil y el catálogo de campo (nombres sin valores), y crea/lee sus propios
+// partes de campo. Administración convierte esos partes en remitos.
+// Rol solo operativo: Empleado (carga remitos y lee datos de consulta).
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function roleDocPath() {
+      return /databases/$(database)/documents/userRoles/$(request.auth.uid);
+    }
+
+    // Una cuenta con clave temporal (mustChangePassword) no accede a ningún dato hasta elegir su propia clave.
+    function isStaff() {
+      return signedIn()
+        && exists(roleDocPath())
+        && get(roleDocPath()).data.active == true
+        && get(roleDocPath()).data.get('mustChangePassword', false) == false;
+    }
+
+    function currentRole() {
+      return get(roleDocPath()).data.role;
+    }
+
+    function isAdmin() {
+      return isStaff() && currentRole() in ['SuperAdmin', 'Owner', 'Gerente', 'Admin'];
+    }
+
+    function isSuperAdmin() {
+      return isStaff() && currentRole() == 'SuperAdmin';
+    }
+
+    function isFieldLead() {
+      return isStaff() && currentRole() == 'Capataz';
+    }
+
+    // Personal con acceso a los datos de gestión: todos los roles activos excepto el capataz.
+    function isOffice() {
+      return isStaff() && currentRole() != 'Capataz';
+    }
+
+    // Nunca se guardan contraseñas en documentos.
+    function hasNoPassword() {
+      return !('password' in request.resource.data);
+    }
+
+    // Roles de acceso: cada cuenta puede leer solo el suyo; los administradores leen y
+    // administran todos, excepto el propio y los de SuperAdmin (solo otro SuperAdmin).
+    match /userRoles/{authUid} {
+      allow get: if signedIn() && (request.auth.uid == authUid || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isAdmin()
+        && request.auth.uid != authUid
+        && (isSuperAdmin() || request.resource.data.role != 'SuperAdmin');
+      allow update: if isAdmin()
+        && request.auth.uid != authUid
+        && (isSuperAdmin()
+            || (resource.data.role != 'SuperAdmin' && request.resource.data.role != 'SuperAdmin'));
+      allow delete: if isSuperAdmin() && request.auth.uid != authUid;
+    }
+
+    match /users/{userId} {
+      allow read: if isOffice()
+        || (isFieldLead() && resource.data.authUid == request.auth.uid);
+      allow create, update: if isAdmin() && hasNoPassword();
+      allow delete: if isAdmin();
+    }
+
+    match /workers/{workerId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    // Remitos y partes técnicos: el personal de campo los carga; solo un administrador los borra.
+    match /auditRecords/{recordId} {
+      allow read: if isOffice();
+      allow create, update: if isOffice();
+      allow delete: if isAdmin();
+    }
+
+    match /clients/{clientId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /materials/{materialId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /maintenanceServices/{serviceId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /vehicles/{vehicleId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /vehicleEvents/{eventId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    match /technicalParameters/{paramId} {
+      allow read: if isOffice();
+      allow write: if isAdmin();
+    }
+
+    // Información financiera: solo administradores.
+    match /financials/{metricId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /archivedReceipts/{receiptId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /systemSettings/{settingId} {
+      allow read: if isOffice() || (isFieldLead() && settingId == 'status');
+      allow write: if isAdmin();
+    }
+
+    // Partes de campo: los carga el capataz (solo hechos, sin valores) y los convierte administración.
+    // El capataz crea partes a su nombre en estado Pendiente y lee solo los suyos.
+    match /fieldReports/{reportId} {
+      allow read: if isOffice()
+        || (isFieldLead() && resource.data.submittedByAuthUid == request.auth.uid);
+      allow create: if isAdmin()
+        || (isFieldLead()
+            && request.resource.data.submittedByAuthUid == request.auth.uid
+            && request.resource.data.status == 'Pendiente'
+            && !('billedPrice' in request.resource.data)
+            && !('suggestedPrice' in request.resource.data));
+      allow update, delete: if isAdmin();
+    }
+
+    // Catálogo de campo: nombres de clientes, personal y materiales, sin valores.
+    // Lo mantiene una sesión administrativa; cualquier cuenta activa lo lee.
+    match /catalogoCampo/{catalogId} {
+      allow read: if isStaff();
+      allow write: if isAdmin();
+    }
+
+    // Cualquier otra colección queda denegada.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

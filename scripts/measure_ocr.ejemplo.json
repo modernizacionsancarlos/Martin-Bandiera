@@ -1,0 +1,11 @@
+{
+  "remitoPapel": "0002-00010966",
+  "fecha": "2026-08-03",
+  "cliente": "El Magistral",
+  "descripcion": "Se realiza en cabaña el cambio de disyuntor que era chico, se cambió a uno de 40A. En galpón se realizó el cambio de un fotocontrol y en sala de riego se cambian dos fotocontroles ya que los que estaban se encontraban dañados.",
+  "horaEntrada": "13:30",
+  "horaSalida": "17:00",
+  "cantidadPersonal": 2,
+  "cuadrilla": [{ "nombre": "Facundo" }, { "nombre": "Matías V" }],
+  "materiales": []
+}

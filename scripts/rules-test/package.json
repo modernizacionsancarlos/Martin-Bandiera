@@ -1,0 +1,15 @@
+{
+  "name": "rules-test",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node -e \"require('fs').copyFileSync('../../firestore.rules.next','firestore.rules.test')\" && firebase emulators:exec --only firestore --project demo-bandiera \"node rules.test.mjs\"",
+    "test:admin": "firebase emulators:exec --only auth,firestore --project demo-bandiera \"..\\..\\node_modules\\.bin\\tsx ..\\admin-api.test.ts\"",
+    "test:channels": "firebase emulators:exec --only auth,firestore --project demo-bandiera \"..\\..\\node_modules\\.bin\\tsx ..\\channels.test.ts\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^4.0.1",
+    "firebase": "^11.0.0",
+    "firebase-tools": "^13.29.0"
+  }
+}
