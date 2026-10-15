@@ -1,0 +1,46 @@
+# App del capataz para Google Play
+
+**Estado:** la parte técnica de la aplicación instalable (PWA) está hecha y probada en la demo. Falta lo que depende de decisiones y cuentas: dominio, firma de la app, ficha de Google Play y política de privacidad definitiva. Nada de esto toca producción.
+
+## Qué quedó hecho
+- **Aplicación instalable (PWA):** manifiesto (`public/manifest.webmanifest`), íconos de 192, 512 y "maskable" (`public/icons/`), ícono de iPhone y colores del tema. Chrome y Edge ofrecen "Instalar app"; la pantalla del capataz tiene el botón "Instalar app".
+- **Abre sin señal:** un service worker (`public/sw.js`) guarda la aplicación en el teléfono en la primera visita (incluidos los módulos que se cargan bajo demanda). Probado: con el servidor apagado, la app abre con la sesión del capataz y su lista de partes.
+- **Carga sin señal:** la base ya usa el caché persistente de Firestore (`src/services/firebase.ts`): los partes cargados sin conexión se guardan en el teléfono y se envían solos al volver la señal. La pantalla del capataz muestra "Sin señal…" y marca cada parte "Sin enviar" hasta que el servidor lo confirma.
+- **Qué NO guarda el service worker:** nada de `/api`, Firestore, Firebase Auth ni servicios externos. Los datos offline los maneja la base, no el service worker.
+- **Firma liviana:** la firma se reduce a un máximo de 400 x 160 px antes de guardarse (`src/utils/signatureImage.ts`) y las reglas de Firestore rechazan un parte con una firma de más de 100.000 caracteres. Ver la decisión más abajo.
+- **Política de privacidad (borrador):** `public/privacidad.html`, se publica en `/privacidad.html`.
+- **Pruebas:** `npx tsx scripts/pwa.test.ts` (manifiesto, íconos y comportamiento del service worker) y, en `scripts/rules-test`, `npm test` (incluye el límite de la firma).
+- **Demo:** botón "Simular sin señal" en la franja naranja de la demo. Para probar la versión instalable: `npx vite build --mode demo --outDir dist-demo` y la configuración "demo-instalable" (puerto 3101).
+
+## Decisión: la firma NO se pasa a Cloud Storage
+El pedido original era mover la firma a Storage para no chocar con el límite de 1 MB de un documento de Firestore. Se resolvió de otra forma, a propósito:
+- Una firma reducida pesa unos 5 a 25 KB, muy por debajo del límite, y las reglas la limitan a 100 KB.
+- Guardarla dentro del parte permite cargar **sin señal**: el parte y su firma viajan juntos. Con Storage, una firma tomada sin conexión necesitaría una cola de subida aparte y un parte "a medias".
+- Las **fotos de remitos** (canales de WhatsApp y Drive) sí van a Storage, porque pesan cientos de KB; las sube el servidor y solo las ven administración y gerencia.
+- Si más adelante se quisiera Storage para firmas, hace falta una cola de subida sin conexión y reglas de Storage con permisos por rol (las reglas de Storage no leen la base con nombre propio de este proyecto; habría que usar permisos en el token).
+
+## Cómo se publica en Google Play
+Hay dos caminos. Recomiendo el A.
+
+**A. Trusted Web Activity (TWA) con Bubblewrap.** La app de Android es un marco que abre la web instalable a pantalla completa. Es lo más simple y se actualiza solo al actualizar la web.
+1. **Dominio propio con HTTPS** (por ejemplo, `app.<dominio del cliente>`) apuntando al servidor. Es obligatorio para TWA y además resuelve el problema de cambiar de dirección. Opciones: mapeo de dominio de Cloud Run, o Firebase Hosting delante.
+2. Instalar el JDK 17 y el Android SDK, y generar el proyecto: `npx @bubblewrap/cli init --manifest https://<dominio>/manifest.webmanifest` y `npx @bubblewrap/cli build`. Genera el paquete `.aab` y una clave de firma (guardarla en un lugar seguro: sin ella no se pueden publicar actualizaciones).
+3. Publicar `/.well-known/assetlinks.json` con el nombre del paquete y la huella SHA-256 de la clave de firma (ejemplo en `public/.well-known/assetlinks.json.example`). Sin esto, la app muestra una barra de navegador.
+4. Subir el `.aab` a Play Console.
+
+**B. Capacitor.** Una app Android nativa que envuelve la web. Da acceso a funciones del teléfono (cámara nativa, notificaciones) pero exige Android Studio y más mantenimiento. Conviene solo si se necesita algo que la web no ofrezca.
+
+## Lo que hay que preparar en Play Console (cuenta de UCO Digital Lab)
+- **Cuenta de desarrollador** de Google Play (pago único; confirmar el valor vigente). Si es una cuenta personal nueva, Google puede exigir una **prueba cerrada con varios testers durante un período** antes de publicar; con cuenta de organización suele no pedirse. Confirmar la condición vigente al crear la cuenta.
+- **Ficha:** nombre, descripción corta y larga en español, ícono de 512 px (ya está), imagen destacada de 1024 x 500 y capturas de pantalla del teléfono (se pueden sacar de la demo).
+- **Política de privacidad** con dirección pública (la de `/privacidad.html`, ya revisada por un asesor legal).
+- **Seguridad de los datos:** formulario de Play. Respuestas según la política: se recopilan nombre, correo y teléfono (cuenta), y contenido de la app (partes y firma); se cifran en tránsito; el usuario puede pedir la eliminación; no se comparten con terceros con fines de publicidad.
+- **Acceso a la app:** la app exige login; hay que dar a Google una cuenta de prueba (una cuenta de capataz de la demo no sirve: debe existir en el sistema real).
+- **Clasificación de contenido** y **público objetivo** (solo adultos / uso laboral).
+
+## Pendiente (depende del cliente)
+1. Dominio y quién lo administra.
+2. Datos legales para la política (razón social, CUIT, correo de contacto, plazo de conservación).
+3. Cuenta de Play Console de UCO Digital Lab y quién carga la ficha.
+4. Decidir si el login de producción usa correo real o clave temporal (ya está resuelto con clave temporal).
+5. Probar con teléfonos reales de los capataces en la finca (señal intermitente) antes de publicar.

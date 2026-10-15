@@ -149,7 +149,9 @@ service cloud.firestore {
             && request.resource.data.submittedByAuthUid == request.auth.uid
             && request.resource.data.status == 'Pendiente'
             && !('billedPrice' in request.resource.data)
-            && !('suggestedPrice' in request.resource.data));
+            && !('suggestedPrice' in request.resource.data)
+            // La firma viaja dentro del parte: se limita su tamaño (Firestore admite 1 MB por documento).
+            && (!('signatureUrl' in request.resource.data) || request.resource.data.signatureUrl.size() < 100000));
       allow update, delete: if isAdmin();
     }
 

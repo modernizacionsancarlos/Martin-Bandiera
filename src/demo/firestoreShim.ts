@@ -131,6 +131,30 @@ function mergeInto(target: DocData, incoming: DocData): DocData {
   return target;
 }
 
+// ---------------------------------------------------------------- modo "sin señal"
+// Igual que el caché persistente de Firestore: sin conexión, la escritura se aplica en el dispositivo
+// (la pantalla la muestra enseguida) y la promesa queda abierta hasta que vuelve la conexión.
+let offline = false;
+const pendingDocs = new Set<string>();
+let waiters: Array<() => void> = [];
+
+export function isDemoOffline(): boolean {
+  return offline;
+}
+
+export function setDemoOffline(value: boolean) {
+  if (offline === value) return;
+  offline = value;
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(value ? 'offline' : 'online'));
+  if (!value) {
+    pendingDocs.clear();
+    const toRelease = waiters;
+    waiters = [];
+    notifyAll();
+    toRelease.forEach(release => release());
+  }
+}
+
 // ---------------------------------------------------------------- snapshots
 function makeDocSnapshot(ref: DocRef) {
   const data = store[ref.parent.path]?.[ref.id];
@@ -139,7 +163,7 @@ function makeDocSnapshot(ref: DocRef) {
     ref,
     exists: () => data !== undefined,
     data: () => (data === undefined ? undefined : clone(data)),
-    metadata: { fromCache: false, hasPendingWrites: false }
+    metadata: { fromCache: false, hasPendingWrites: pendingDocs.has(`${ref.parent.path}/${ref.id}`) }
   };
 }
 
@@ -192,49 +216,56 @@ async function guardWrite() {
   }
 }
 
-export async function setDoc(ref: DocRef, data: DocData, options?: { merge?: boolean }) {
+async function commitWrite(apply: () => void, collections: Iterable<string>, docPaths: string[]) {
+  if (offline) {
+    apply();
+    persist();
+    docPaths.forEach(p => pendingDocs.add(p));
+    for (const c of collections) notifyCollection(c);
+    await new Promise<void>(release => waiters.push(release));
+    return;
+  }
   await guardWrite();
-  writeDoc(ref, data, Boolean(options?.merge));
+  apply();
   persist();
-  notifyCollection(ref.parent.path);
+  for (const c of collections) notifyCollection(c);
+}
+
+export async function setDoc(ref: DocRef, data: DocData, options?: { merge?: boolean }) {
+  await commitWrite(() => writeDoc(ref, data, Boolean(options?.merge)), [ref.parent.path], [`${ref.parent.path}/${ref.id}`]);
 }
 export async function updateDoc(ref: DocRef, data: DocData) {
-  await guardWrite();
-  writeDoc(ref, data, true);
-  persist();
-  notifyCollection(ref.parent.path);
+  await commitWrite(() => writeDoc(ref, data, true), [ref.parent.path], [`${ref.parent.path}/${ref.id}`]);
 }
 export async function deleteDoc(ref: DocRef) {
-  await guardWrite();
-  removeDoc(ref);
-  persist();
-  notifyCollection(ref.parent.path);
+  await commitWrite(() => removeDoc(ref), [ref.parent.path], [`${ref.parent.path}/${ref.id}`]);
 }
 
 export function writeBatch(_db?: any) {
   const ops: Array<() => void> = [];
   const touched = new Set<string>();
+  const paths: string[] = [];
   const batch = {
     set(ref: DocRef, data: DocData, options?: { merge?: boolean }) {
       ops.push(() => writeDoc(ref, data, Boolean(options?.merge)));
       touched.add(ref.parent.path);
+      paths.push(`${ref.parent.path}/${ref.id}`);
       return batch;
     },
     update(ref: DocRef, data: DocData) {
       ops.push(() => writeDoc(ref, data, true));
       touched.add(ref.parent.path);
+      paths.push(`${ref.parent.path}/${ref.id}`);
       return batch;
     },
     delete(ref: DocRef) {
       ops.push(() => removeDoc(ref));
       touched.add(ref.parent.path);
+      paths.push(`${ref.parent.path}/${ref.id}`);
       return batch;
     },
     async commit() {
-      await guardWrite();
-      ops.forEach(op => op());
-      persist();
-      touched.forEach(notifyCollection);
+      await commitWrite(() => ops.forEach(op => op()), touched, paths);
     }
   };
   return batch;

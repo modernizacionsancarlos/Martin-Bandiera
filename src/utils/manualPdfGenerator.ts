@@ -1128,7 +1128,7 @@ const buildManual = (
     },
     {
       q: '¿Qué hago si se cae la conexión a internet en la finca?',
-      a: 'Hoy el sistema necesita conexión para guardar: el indicador inferior muestra "Sin conexión" y cuántos cambios quedan sin sincronizar, y avisa antes de cerrar la pestaña. La carga sin conexión es parte de la aplicación instalable del capataz para Android, que está planificada (sección 12).'
+      a: 'Seguí cargando. Con la aplicación del capataz instalada, los partes se guardan en el teléfono (figuran como "Sin enviar") y se envían solos cuando vuelve la señal (sección 12). En administración, el indicador inferior muestra "Sin conexión" y cuántos cambios quedan sin sincronizar.'
     },
     {
       q: '¿El capataz puede ver precios o costos?',

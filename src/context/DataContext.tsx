@@ -124,6 +124,8 @@ interface DataContextType {
 
   // Partes de campo (los carga el capataz sin valores; administración los convierte en remitos)
   fieldReports: FieldReport[];
+  /** Partes cargados en este dispositivo que todavía no llegaron al servidor (sin señal). */
+  unsyncedFieldReportIds: Set<string>;
   /** Nombres sin valores para la app del capataz (clientes, personal, materiales). */
   fieldCatalog: FieldCatalog | null;
   addFieldReport: (input: Omit<FieldReport, 'id' | 'status' | 'submittedAt' | 'submittedByUid' | 'submittedByAuthUid' | 'submittedByName'>) => void;
@@ -244,6 +246,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // El capataz solo carga partes: su sesión no se suscribe a remitos, finanzas, comprobantes ni tarifas.
   const isFieldRole = currentUser?.role === 'Capataz';
   const [fieldReports, setFieldReports] = useState<FieldReport[]>([]);
+  const [unsyncedFieldReportIds, setUnsyncedFieldReportIds] = useState<Set<string>>(new Set());
   const [fieldCatalog, setFieldCatalog] = useState<FieldCatalog | null>(null);
 
   // Production-Ready Default States: Empty collections by default so publishing never re-seeds demo data
@@ -427,7 +430,11 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 3. Technical audit records (remitos) synchronization: Reflects exact database state
     const unsubFieldReports = subscribeFieldReports(
-      remote => { if (isMounted) setFieldReports(remote); },
+      (remote, unsynced) => {
+        if (!isMounted) return;
+        setFieldReports(remote);
+        setUnsyncedFieldReportIds(unsynced);
+      },
       isFieldRole ? currentUser?.authUid : undefined
     );
     const unsubCatalog = subscribeFieldCatalog(catalog => { if (isMounted) setFieldCatalog(catalog); });
@@ -2166,6 +2173,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteArchivedReceipt,
         updateTechnicalParameters,
         fieldReports,
+        unsyncedFieldReportIds,
         fieldCatalog,
         addFieldReport,
         markFieldReportConverted,

@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "JOB Martin Bandiera · Partes de Campo",
+  "short_name": "JOB Campo",
+  "description": "Carga de partes de trabajo en la finca y gestión de remitos de JOB Martin Bandiera.",
+  "lang": "es-AR",
+  "dir": "ltr",
+  "start_url": "/?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "categories": ["business", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

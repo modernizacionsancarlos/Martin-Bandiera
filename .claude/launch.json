@@ -18,6 +18,21 @@
         "demo"
       ],
       "port": 3100
+    },
+    {
+      "name": "demo-instalable",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "preview",
+        "--mode",
+        "demo",
+        "--port",
+        "3101",
+        "--outDir",
+        "dist-demo"
+      ],
+      "port": 3101
     }
   ]
 }

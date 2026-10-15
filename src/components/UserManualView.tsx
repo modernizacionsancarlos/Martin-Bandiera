@@ -1531,7 +1531,7 @@ export const UserManualView: React.FC = () => {
                   ¿Qué sucede si un técnico carga un reporte sin señal de internet en el campo?
                 </span>
                 <p className="text-slate-600 dark:text-slate-300 text-[11px] leading-relaxed">
-                  Hoy el sistema necesita conexión para guardar: el indicador de la esquina inferior derecha muestra "Sin conexión" y cuántos cambios quedan sin sincronizar, y avisa antes de cerrar la pestaña. La carga sin conexión (guardar en el teléfono y sincronizar al volver la señal) es parte de la aplicación instalable del capataz para Android, que está planificada (ver sección 12).
+                  Seguí cargando. Con la aplicación del capataz instalada, los partes se guardan en el teléfono (figuran como "Sin enviar") y se envían solos cuando vuelve la señal (ver sección 12). En el sistema de administración, el indicador de la esquina inferior derecha muestra "Sin conexión" y cuántos cambios quedan sin sincronizar, y avisa antes de cerrar la pestaña.
                 </p>
               </div>
 

@@ -141,10 +141,20 @@ export const MANUAL_EXTRA_SECTIONS: ManualExtraSection[] = [
         ]
       },
       {
+        type: 'bullets',
+        title: 'Sin señal en la finca',
+        items: [
+          'La aplicación se instala en el teléfono (botón "Instalar app") y abre aunque no haya señal.',
+          'Los partes cargados sin conexión se guardan en el teléfono y se envían solos cuando vuelve la cobertura.',
+          'Arriba aparece el aviso "Sin señal" y cada parte pendiente muestra "Sin enviar" hasta que el servidor lo confirma; después pasa a "Enviado · en revisión".',
+          'La firma se guarda reducida (unos pocos KB) dentro del parte, así viaja junto con él aunque no haya conexión.'
+        ]
+      },
+      {
         type: 'note',
         tone: 'info',
         title: 'Estado y próximos pasos',
-        text: 'Hoy funciona en el navegador. Está planificada la versión instalable para Android (Google Play, cuenta de UCO Digital Lab) con carga sin conexión, para trabajar en la finca sin señal y sincronizar al volver la cobertura. Las fotos y firmas se pasarán a almacenamiento en la nube.'
+        text: 'La aplicación instalable y la carga sin señal funcionan en la demo. Falta publicarla en Google Play (cuenta de UCO Digital Lab), que requiere un dominio propio con HTTPS, la política de privacidad definitiva y pruebas con teléfonos reales en la finca.'
       }
     ]
   },

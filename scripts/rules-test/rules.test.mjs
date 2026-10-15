@@ -66,6 +66,8 @@ await check('crea un parte a su nombre', assertSucceeds(setDoc(doc(cap, 'fieldRe
 await check('no crea un parte a nombre de otro', assertFails(setDoc(doc(cap, 'fieldReports', 'nuevo2'), newPart('cap2'))));
 await check('no crea un parte ya Convertido', assertFails(setDoc(doc(cap, 'fieldReports', 'nuevo3'), { ...newPart('cap1'), status: 'Convertido' })));
 await check('no crea un parte con precio', assertFails(setDoc(doc(cap, 'fieldReports', 'nuevo4'), { ...newPart('cap1'), billedPrice: 5 })));
+await check('crea un parte con una firma liviana', assertSucceeds(setDoc(doc(cap, 'fieldReports', 'firma1'), { ...newPart('cap1'), signatureUrl: 'data:image/png;base64,' + 'A'.repeat(20000) })));
+await check('no crea un parte con una firma enorme', assertFails(setDoc(doc(cap, 'fieldReports', 'firma2'), { ...newPart('cap1'), signatureUrl: 'data:image/png;base64,' + 'A'.repeat(150000) })));
 await check('no modifica su parte', assertFails(updateDoc(doc(cap, 'fieldReports', 'p-cap1'), { status: 'Convertido' })));
 await check('no borra su parte', assertFails(deleteDoc(doc(cap, 'fieldReports', 'p-cap1'))));
 await check('no crea remitos', assertFails(setDoc(doc(cap, 'auditRecords', 'zz'), { billedPrice: 1 })));

@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardList, Plus, LogOut, X, Clock, Trash2, Eraser, FileCheck2, Ban } from 'lucide-react';
+import { ClipboardList, Plus, LogOut, X, Clock, Trash2, Eraser, FileCheck2, Ban, CloudOff, Download } from 'lucide-react';
+import { useSyncStatus } from '../services/syncStatus';
+import { exportSignature } from '../utils/signatureImage';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { FieldReport, FieldReportCrewMember, FieldReportMaterial } from '../types';
@@ -144,7 +146,7 @@ const PartForm: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       crew,
       materials: items,
       description: description.trim(),
-      signatureUrl: hasSignature && canvasRef.current ? canvasRef.current.toDataURL('image/png') : undefined
+      signatureUrl: hasSignature && canvasRef.current ? exportSignature(canvasRef.current) : undefined
     });
     onClose();
   };
@@ -299,9 +301,41 @@ const PartForm: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   );
 };
 
+/** Evento del navegador que permite ofrecer "Instalar la app" (Chrome y Edge en Android y escritorio). */
+interface InstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+
+function useInstallPrompt() {
+  const [event, setEvent] = useState<InstallPromptEvent | null>(null);
+  useEffect(() => {
+    const onPrompt = (e: Event) => {
+      e.preventDefault();
+      setEvent(e as InstallPromptEvent);
+    };
+    const onInstalled = () => setEvent(null);
+    window.addEventListener('beforeinstallprompt', onPrompt);
+    window.addEventListener('appinstalled', onInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onPrompt);
+      window.removeEventListener('appinstalled', onInstalled);
+    };
+  }, []);
+  const install = async () => {
+    if (!event) return;
+    await event.prompt();
+    await event.userChoice;
+    setEvent(null);
+  };
+  return { canInstall: event !== null, install };
+}
+
 export const FieldApp: React.FC = () => {
   const { currentUser, logout } = useAuth();
-  const { fieldReports } = useData();
+  const { fieldReports, unsyncedFieldReportIds } = useData();
+  const { online, pending } = useSyncStatus();
+  const { canInstall, install } = useInstallPrompt();
   const [showForm, setShowForm] = useState(false);
 
   const mine = useMemo(
@@ -316,10 +350,26 @@ export const FieldApp: React.FC = () => {
           <p className="text-[11px] uppercase tracking-widest text-cyan-400 font-black">Partes de campo</p>
           <p className="text-base font-black leading-tight">{currentUser?.displayName}</p>
         </div>
-        <button onClick={logout} className="p-2.5 rounded-xl bg-slate-800 hover:bg-rose-500/30 cursor-pointer" aria-label="Cerrar sesión">
-          <LogOut className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          {canInstall && (
+            <button onClick={install} className="px-3 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-xs font-black inline-flex items-center gap-1.5 cursor-pointer">
+              <Download className="w-4 h-4" /> Instalar app
+            </button>
+          )}
+          <button onClick={logout} className="p-2.5 rounded-xl bg-slate-800 hover:bg-rose-500/30 cursor-pointer" aria-label="Cerrar sesión">
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
       </header>
+
+      {(!online || pending > 0) && (
+        <div role="status" className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-black flex items-center gap-2 justify-center">
+          <CloudOff className="w-4 h-4 shrink-0" />
+          {!online
+            ? `Sin señal: seguí cargando, los partes se envían solos cuando vuelva la conexión${pending ? ` (${pending} por enviar)` : ''}.`
+            : `Enviando ${pending} cambio${pending === 1 ? '' : 's'}…`}
+        </div>
+      )}
 
       <main className="max-w-xl mx-auto px-4 py-5 pb-28 space-y-4">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wider text-slate-500">
@@ -344,9 +394,15 @@ export const FieldApp: React.FC = () => {
                 <span className="text-xs font-mono text-slate-500 shrink-0">{r.date.split('-').reverse().join('/')}</span>
               </div>
               <p className="text-sm mt-2 text-slate-600 dark:text-slate-300 line-clamp-2">{r.description}</p>
-              <div className={`mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black ${st.cls}`}>
-                {st.icon} {st.label}
-              </div>
+              {unsyncedFieldReportIds.has(r.id) ? (
+                <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30">
+                  <CloudOff className="w-3.5 h-3.5" /> Sin enviar · se envía cuando haya señal
+                </div>
+              ) : (
+                <div className={`mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black ${st.cls}`}>
+                  {st.icon} {st.label}
+                </div>
+              )}
               {r.status === 'Descartado' && r.discardReason && (
                 <p className="text-xs text-rose-600 mt-2">Motivo: {r.discardReason}</p>
               )}

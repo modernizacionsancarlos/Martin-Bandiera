@@ -1129,15 +1129,23 @@ export async function clearAllVehicleEventsInFirestore(): Promise<void> {
 // FIELD REPORTS (partes de campo cargados por capataces, sin valores)
 // -------------------------------------------------------------
 /** Con `authUid` solo pide los partes de esa cuenta: es la consulta que las reglas permiten a un capataz. */
-export function subscribeFieldReports(callback: (reports: FieldReport[]) => void, authUid?: string): Unsubscribe {
+export function subscribeFieldReports(
+  callback: (reports: FieldReport[], unsyncedIds: Set<string>) => void,
+  authUid?: string
+): Unsubscribe {
   const col = collection(db, 'fieldReports');
   return onSnapshot(
     authUid ? query(col, where('submittedByAuthUid', '==', authUid)) : col,
     snapshot => {
       const list: FieldReport[] = [];
-      snapshot.forEach(docSnap => list.push(docSnap.data() as FieldReport));
+      // Partes escritos en este dispositivo que el servidor todavía no confirmó (por ejemplo, sin señal).
+      const unsynced = new Set<string>();
+      snapshot.forEach(docSnap => {
+        list.push(docSnap.data() as FieldReport);
+        if (docSnap.metadata?.hasPendingWrites) unsynced.add(docSnap.id);
+      });
       list.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
-      callback(list);
+      callback(list, unsynced);
     },
     error => {
       handleFirestoreError(error, OperationType.GET, 'fieldReports');

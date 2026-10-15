@@ -105,3 +105,13 @@ Cada cambio se hace en la rama `feat/firebase-auth-rules`, se prueba en la demo 
 **Pendiente de la auditoría (no incluido):** pestaña de Google Drive vacía por defecto, cuadrilla inventada cuando la IA no lee personal, validación de la respuesta de la IA en el servidor, remito real de ejemplo incrustado en el código, y restricción del Sandbox por permiso (hoy lo ve cualquier rol).
 
 **Archivos:** `src/components/SandboxView.tsx`, `src/components/SandboxRemitoOcr.tsx`.
+
+## 5. App instalable del capataz (Google Play): parte técnica
+
+**Estado:** hecho en la rama y probado en la demo. Sin publicar. Detalle y pasos de publicación en `docs/APP_PLAY_STORE.md`.
+
+- **Instalable y abre sin señal.** Manifiesto, íconos, service worker y botón "Instalar app". Probado con el servidor apagado: la app abre con la sesión y la lista de partes.
+- **Carga sin señal.** Los partes se guardan en el teléfono y se envían solos al volver la cobertura; la pantalla muestra "Sin señal" y marca cada parte "Sin enviar" hasta que el servidor lo confirma. La demo tiene el botón "Simular sin señal".
+- **Firma liviana.** Se reduce antes de guardarse (máximo 400 x 160 px) y las reglas rechazan una firma de más de 100.000 caracteres. **Se decidió no pasarla a Cloud Storage:** guardarla dentro del parte permite cargar sin señal con la firma incluida. Las fotos de remitos de los canales sí van a Storage.
+- **Política de privacidad** en borrador (`/privacidad.html`), para revisar con un asesor legal.
+- **Pendiente:** dominio propio con HTTPS, cuenta de Play Console de UCO Digital Lab, firma de la app y prueba en teléfonos reales.

@@ -13,3 +13,4 @@ backups/
 # Claves de cuentas de servicio
 *service-account*.json
 *-firebase-adminsdk-*.json
+dist-demo/
