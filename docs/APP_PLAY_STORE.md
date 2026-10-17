@@ -12,6 +12,29 @@
 - **Pruebas:** `npx tsx scripts/pwa.test.ts` (manifiesto, íconos y comportamiento del service worker) y, en `scripts/rules-test`, `npm test` (incluye el límite de la firma).
 - **Demo:** botón "Simular sin señal" en la franja naranja de la demo. Para probar la versión instalable: `npx vite build --mode demo --outDir dist-demo` y la configuración "demo-instalable" (puerto 3101).
 
+## Que no se pierda ningún parte (bandeja de salida)
+La base guarda sin señal y envía sola, pero si el servidor **rechaza** un parte (sesión vencida, cuenta dada de baja, regla de seguridad), Firestore descarta la escritura. Para que el capataz nunca pierda lo que cargó en la finca (`src/services/fieldOutbox.ts`):
+- Cada parte queda en una **bandeja de salida del teléfono** hasta que el servidor lo confirma.
+- Si el servidor lo rechaza, el parte sigue visible como "No se pudo enviar", con el motivo y el botón "Reintentar envío".
+- Al abrir la app se **reconcilia** con lo que confirmó el servidor: lo recibido se borra de la bandeja; lo que no está ni figura pendiente se vuelve a enviar (mismo identificador: no se duplica).
+- Cerrar sesión con partes sin enviar pide confirmación.
+- Los identificadores de parte son únicos entre teléfonos (fecha + valor aleatorio).
+- Pruebas: `npx tsx scripts/outbox.test.ts`.
+
+## Actualizaciones de la app
+- Cada publicación genera un `sw.js` distinto (el build lo marca con un identificador), así los teléfonos instalan la versión nueva y guardan sus archivos para abrir sin señal.
+- Cuando se instala una versión nueva, la pantalla del capataz muestra "Hay una versión nueva de la app. Tocá acá para actualizar."
+- Con la app de Google Play (TWA) la web se actualiza sola: no hace falta subir una versión nueva a Play por cada cambio de la web, solo cuando cambia la app de Android.
+
+## Vínculo con la app de Android (assetlinks)
+El servidor publica `/.well-known/assetlinks.json` a partir de dos variables (`server/assetLinks.ts`, con pruebas en `scripts/assetlinks.test.ts`):
+- `ANDROID_PACKAGE_NAME` (por ejemplo, `com.ucodigitallab.jobcampo`)
+- `ANDROID_SHA256_CERT_FINGERPRINTS` (una o varias huellas separadas por coma: la de la clave de carga y, si se usa "Firma de apps de Play", la que muestra Play Console en *Integridad de la app*).
+Sin ellas el servidor responde 404 (no publica nada inventado).
+
+## Verificador previo a publicar
+`npx tsx scripts/check_play_ready.ts https://app.dominio.com --paquete=com.ucodigitallab.jobcampo` revisa HTTPS, manifiesto, íconos, service worker, assetlinks y política de privacidad, y marca OK, AVISO o ERROR. Se probó contra la demo (con `localhost` avisa que falta HTTPS, el vínculo y la política definitiva).
+
 ## Decisión: la firma NO se pasa a Cloud Storage
 El pedido original era mover la firma a Storage para no chocar con el límite de 1 MB de un documento de Firestore. Se resolvió de otra forma, a propósito:
 - Una firma reducida pesa unos 5 a 25 KB, muy por debajo del límite, y las reglas la limitan a 100 KB.

@@ -7,6 +7,7 @@ import fs from 'fs';
 import type { NextFunction, Request, Response } from 'express';
 import { createAdminUsersRouter } from './server/adminUsers';
 import { scanRemitoImage, OcrError } from './server/ocr';
+import { buildAssetLinks } from './server/assetLinks';
 import { createIntakeService, createFieldImageRouter, createCloudImageStore, getAdminFirestore, type Extractor } from './server/intake';
 import { createWhatsAppRouter, createGraphClient } from './server/whatsapp';
 import { createDriveIntakeRouter, createGoogleDriveClient, loadFolderConfig, runDriveIntake } from './server/driveIntake';
@@ -178,6 +179,14 @@ async function startServer() {
       console.warn('[AdminUsers] Administración de usuarios por servidor deshabilitada:', err);
     }
   }
+
+  // Vínculo con la app de Android (Google Play): Android lo consulta para abrir la web sin barra del navegador.
+  app.get('/.well-known/assetlinks.json', (_req, res) => {
+    const links = buildAssetLinks(process.env);
+    if (!links.ok) return res.status(404).json({ error: 'assetlinks no configurado', problems: links.problems });
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(links.body);
+  });
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {

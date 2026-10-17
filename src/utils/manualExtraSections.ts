@@ -147,7 +147,9 @@ export const MANUAL_EXTRA_SECTIONS: ManualExtraSection[] = [
           'La aplicación se instala en el teléfono (botón "Instalar app") y abre aunque no haya señal.',
           'Los partes cargados sin conexión se guardan en el teléfono y se envían solos cuando vuelve la cobertura.',
           'Arriba aparece el aviso "Sin señal" y cada parte pendiente muestra "Sin enviar" hasta que el servidor lo confirma; después pasa a "Enviado · en revisión".',
-          'La firma se guarda reducida (unos pocos KB) dentro del parte, así viaja junto con él aunque no haya conexión.'
+          'La firma se guarda reducida (unos pocos KB) dentro del parte, así viaja junto con él aunque no haya conexión.',
+          'Cada parte queda además en una bandeja de salida del teléfono hasta que el servidor confirma que lo recibió. Si el servidor lo rechaza (por ejemplo, sesión vencida), el parte no se pierde: figura como "No se pudo enviar", con el motivo y un botón "Reintentar envío".',
+          'Al cerrar sesión con partes sin enviar, la aplicación pide confirmación. Cuando hay una versión nueva de la app, aparece un aviso para actualizar.'
         ]
       },
       {

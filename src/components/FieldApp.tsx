@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ClipboardList, Plus, LogOut, X, Clock, Trash2, Eraser, FileCheck2, Ban, CloudOff, Download } from 'lucide-react';
+import { ClipboardList, Plus, LogOut, X, Clock, Trash2, Eraser, FileCheck2, Ban, CloudOff, Download, AlertTriangle, RefreshCw } from 'lucide-react';
 import { useSyncStatus } from '../services/syncStatus';
 import { exportSignature } from '../utils/signatureImage';
 import { useAuth } from '../context/AuthContext';
@@ -331,17 +331,43 @@ function useInstallPrompt() {
   return { canInstall: event !== null, install };
 }
 
+/** Avisa cuando se instaló una versión nueva de la app (el teléfono sigue con la vieja hasta recargar). */
+function useAppUpdate() {
+  const [updated, setUpdated] = useState(false);
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller) return;
+    const onChange = () => setUpdated(true);
+    navigator.serviceWorker.addEventListener('controllerchange', onChange);
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onChange);
+  }, []);
+  return updated;
+}
+
 export const FieldApp: React.FC = () => {
   const { currentUser, logout } = useAuth();
-  const { fieldReports, unsyncedFieldReportIds } = useData();
+  const { fieldReports, unsyncedFieldReportIds, outboxEntries, retryFieldReport } = useData();
+  const appUpdated = useAppUpdate();
   const { online, pending } = useSyncStatus();
   const { canInstall, install } = useInstallPrompt();
   const [showForm, setShowForm] = useState(false);
 
-  const mine = useMemo(
-    () => fieldReports.filter(r => r.submittedByAuthUid === currentUser?.authUid),
-    [fieldReports, currentUser]
-  );
+  // Partes del servidor (o del caché del teléfono) más los que solo existen en la bandeja de salida
+  // (por ejemplo, uno que el servidor rechazó y Firestore descartó): el capataz nunca los pierde de vista.
+  const rows = useMemo(() => {
+    const failedBy = new Map(outboxEntries.map(e => [e.report.id, e.failed]));
+    const own = fieldReports
+      .filter(r => r.submittedByAuthUid === currentUser?.authUid)
+      .map(report => ({ report, failed: failedBy.get(report.id) }));
+    const known = new Set(own.map(r => r.report.id));
+    const orphans = outboxEntries.filter(e => !known.has(e.report.id)).map(e => ({ report: e.report, failed: e.failed }));
+    return [...own, ...orphans].sort((a, b) => (b.report.submittedAt || '').localeCompare(a.report.submittedAt || ''));
+  }, [fieldReports, outboxEntries, currentUser]);
+
+  const handleLogout = () => {
+    const unsent = outboxEntries.length;
+    if ((unsent > 0 || pending > 0) && !window.confirm(`Tenés ${unsent || pending} parte(s) sin enviar. Si cerrás sesión sin señal podrías perderlos. ¿Cerrar sesión igual?`)) return;
+    logout();
+  };
 
   return (
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-800 dark:text-slate-100">
@@ -356,11 +382,20 @@ export const FieldApp: React.FC = () => {
               <Download className="w-4 h-4" /> Instalar app
             </button>
           )}
-          <button onClick={logout} className="p-2.5 rounded-xl bg-slate-800 hover:bg-rose-500/30 cursor-pointer" aria-label="Cerrar sesión">
+          <button onClick={handleLogout} className="p-2.5 rounded-xl bg-slate-800 hover:bg-rose-500/30 cursor-pointer" aria-label="Cerrar sesión">
             <LogOut className="w-5 h-5" />
           </button>
         </div>
       </header>
+
+      {appUpdated && (
+        <button
+          onClick={() => window.location.reload()}
+          className="w-full bg-cyan-600 text-white px-4 py-2 text-xs font-black flex items-center gap-2 justify-center cursor-pointer"
+        >
+          <RefreshCw className="w-4 h-4 shrink-0" /> Hay una versión nueva de la app. Tocá acá para actualizar.
+        </button>
+      )}
 
       {(!online || pending > 0) && (
         <div role="status" className="bg-amber-500 text-slate-950 px-4 py-2 text-xs font-black flex items-center gap-2 justify-center">
@@ -373,16 +408,16 @@ export const FieldApp: React.FC = () => {
 
       <main className="max-w-xl mx-auto px-4 py-5 pb-28 space-y-4">
         <div className="flex items-center gap-2 text-sm font-black uppercase tracking-wider text-slate-500">
-          <ClipboardList className="w-4 h-4" /> Mis partes ({mine.length})
+          <ClipboardList className="w-4 h-4" /> Mis partes ({rows.length})
         </div>
 
-        {mine.length === 0 && (
+        {rows.length === 0 && (
           <p className="text-sm text-slate-500 text-center py-10">
             Todavía no cargaste partes. Tocá "Nuevo parte" para empezar.
           </p>
         )}
 
-        {mine.map(r => {
+        {rows.map(({ report: r, failed }) => {
           const st = STATUS_STYLE[r.status];
           return (
             <article key={r.id} className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 shadow-sm">
@@ -394,7 +429,18 @@ export const FieldApp: React.FC = () => {
                 <span className="text-xs font-mono text-slate-500 shrink-0">{r.date.split('-').reverse().join('/')}</span>
               </div>
               <p className="text-sm mt-2 text-slate-600 dark:text-slate-300 line-clamp-2">{r.description}</p>
-              {unsyncedFieldReportIds.has(r.id) ? (
+              {failed ? (
+                <div className="mt-3 space-y-2">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30">
+                    <AlertTriangle className="w-3.5 h-3.5" /> No se pudo enviar
+                  </div>
+                  <p className="text-xs text-rose-600 dark:text-rose-300">{failed}</p>
+                  <p className="text-xs text-slate-500">El parte está guardado en este teléfono: no se perdió. Si el problema es la sesión, cerrá sesión, volvé a ingresar y reintentá.</p>
+                  <button onClick={() => retryFieldReport(r.id)} className="px-3 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-black inline-flex items-center gap-1.5 cursor-pointer">
+                    <RefreshCw className="w-3.5 h-3.5" /> Reintentar envío
+                  </button>
+                </div>
+              ) : unsyncedFieldReportIds.has(r.id) ? (
                 <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30">
                   <CloudOff className="w-3.5 h-3.5" /> Sin enviar · se envía cuando haya señal
                 </div>

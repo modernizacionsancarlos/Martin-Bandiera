@@ -8,6 +8,8 @@
  *   Los datos offline los maneja la base (caché persistente de Firestore), no este archivo.
  */
 const VERSION = 'v3';
+// Lo reemplaza el build (vite.config.ts): cada publicación genera un sw.js distinto y el navegador lo reinstala.
+const BUILD_ID = '__BUILD_ID__';
 const SHELL_CACHE = `bandiera-shell-${VERSION}`;
 const ASSET_CACHE = `bandiera-assets-${VERSION}`;
 const MAX_ASSET_ENTRIES = 120;

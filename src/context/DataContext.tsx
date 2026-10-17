@@ -1,4 +1,6 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
+import { createFieldOutbox, newFieldReportId, type OutboxEntry } from '../services/fieldOutbox';
+import { describeWriteError } from '../services/syncStatus';
 import { useAuth, getDeletedUsersTombstone, unmarkUserAsDeletedLocally, recordDeletedUserLocally } from './AuthContext';
 import {
   FinancialMetricRecord,
@@ -126,6 +128,10 @@ interface DataContextType {
   fieldReports: FieldReport[];
   /** Partes cargados en este dispositivo que todavía no llegaron al servidor (sin señal). */
   unsyncedFieldReportIds: Set<string>;
+  /** Copia de seguridad de los partes de este teléfono que el servidor todavía no confirmó (o rechazó). */
+  outboxEntries: OutboxEntry[];
+  /** Vuelve a enviar un parte que el servidor había rechazado. */
+  retryFieldReport: (id: string) => void;
   /** Nombres sin valores para la app del capataz (clientes, personal, materiales). */
   fieldCatalog: FieldCatalog | null;
   addFieldReport: (input: Omit<FieldReport, 'id' | 'status' | 'submittedAt' | 'submittedByUid' | 'submittedByAuthUid' | 'submittedByName'>) => void;
@@ -247,6 +253,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isFieldRole = currentUser?.role === 'Capataz';
   const [fieldReports, setFieldReports] = useState<FieldReport[]>([]);
   const [unsyncedFieldReportIds, setUnsyncedFieldReportIds] = useState<Set<string>>(new Set());
+  const outbox = useMemo(
+    () => (currentUser?.authUid ? createFieldOutbox(window.localStorage, currentUser.authUid) : null),
+    [currentUser?.authUid]
+  );
+  const outboxRef = useRef(outbox);
+  outboxRef.current = outbox;
+  const [outboxEntries, setOutboxEntries] = useState<OutboxEntry[]>(() => outbox?.list() ?? []);
+  useEffect(() => {
+    if (!outbox) return;
+    setOutboxEntries(outbox.list());
+    return outbox.subscribe(() => setOutboxEntries(outbox.list()));
+  }, [outbox]);
+
+  /** Envía un parte y deja constancia en la bandeja: se borra al confirmar el servidor, se marca si lo rechaza. */
+  const submitFieldReport = (report: FieldReport) => {
+    const box = outboxRef.current;
+    box?.setInFlight(report.id, true);
+    saveFieldReportToFirestore(report)
+      .then(() => box?.remove(report.id))
+      .catch(error => box?.markFailed(report.id, describeWriteError(error)))
+      .finally(() => box?.setInFlight(report.id, false));
+  };
   const [fieldCatalog, setFieldCatalog] = useState<FieldCatalog | null>(null);
 
   // Production-Ready Default States: Empty collections by default so publishing never re-seeds demo data
@@ -430,10 +458,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 3. Technical audit records (remitos) synchronization: Reflects exact database state
     const unsubFieldReports = subscribeFieldReports(
-      (remote, unsynced) => {
+      (remote, unsynced, confirmedByServer) => {
         if (!isMounted) return;
         setFieldReports(remote);
         setUnsyncedFieldReportIds(unsynced);
+        // Con una lectura confirmada por el servidor se reconcilia la bandeja: lo recibido se borra y lo perdido se reenvía.
+        const box = outboxRef.current;
+        if (box && confirmedByServer) {
+          const { resubmit } = box.reconcile(new Set(remote.map(r => r.id)), unsynced);
+          resubmit.forEach(report => submitFieldReportRef.current(report));
+        }
       },
       isFieldRole ? currentUser?.authUid : undefined
     );
@@ -709,11 +743,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Technical Audit Records Actions
+  const submitFieldReportRef = useRef(submitFieldReport);
+  submitFieldReportRef.current = submitFieldReport;
+
   const addFieldReport: DataContextType['addFieldReport'] = input => {
     if (!currentUser) return;
     const report: FieldReport = {
       ...input,
-      id: `PC-${Date.now().toString(36).toUpperCase()}`,
+      id: newFieldReportId(),
       status: 'Pendiente',
       submittedAt: new Date().toISOString(),
       submittedByUid: currentUser.uid,
@@ -721,7 +758,13 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submittedByName: currentUser.displayName
     };
     setFieldReports(prev => [report, ...prev]);
-    saveFieldReportToFirestore(report);
+    outboxRef.current?.add(report);
+    submitFieldReport(report);
+  };
+
+  const retryFieldReport = (id: string) => {
+    const report = outboxRef.current?.retry(id);
+    if (report) submitFieldReport(report);
   };
 
   const patchFieldReport = (id: string, patch: Partial<FieldReport>) => {
@@ -729,7 +772,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!current) return;
     const next = { ...current, ...patch };
     setFieldReports(prev => prev.map(r => (r.id === id ? next : r)));
-    saveFieldReportToFirestore(next);
+    saveFieldReportToFirestore(next).catch(() => {});
   };
 
   const markFieldReportConverted = (id: string, remitoId: string) =>
@@ -2174,6 +2217,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updateTechnicalParameters,
         fieldReports,
         unsyncedFieldReportIds,
+        outboxEntries,
+        retryFieldReport,
         fieldCatalog,
         addFieldReport,
         markFieldReportConverted,

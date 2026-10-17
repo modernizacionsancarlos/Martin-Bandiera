@@ -1130,7 +1130,7 @@ export async function clearAllVehicleEventsInFirestore(): Promise<void> {
 // -------------------------------------------------------------
 /** Con `authUid` solo pide los partes de esa cuenta: es la consulta que las reglas permiten a un capataz. */
 export function subscribeFieldReports(
-  callback: (reports: FieldReport[], unsyncedIds: Set<string>) => void,
+  callback: (reports: FieldReport[], unsyncedIds: Set<string>, confirmedByServer: boolean) => void,
   authUid?: string
 ): Unsubscribe {
   const col = collection(db, 'fieldReports');
@@ -1145,7 +1145,8 @@ export function subscribeFieldReports(
         if (docSnap.metadata?.hasPendingWrites) unsynced.add(docSnap.id);
       });
       list.sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''));
-      callback(list, unsynced);
+      // fromCache = true: lectura del teléfono (sin señal); no sirve para confirmar que el servidor recibió algo.
+      callback(list, unsynced, snapshot.metadata?.fromCache === false);
     },
     error => {
       handleFirestoreError(error, OperationType.GET, 'fieldReports');
@@ -1153,11 +1154,13 @@ export function subscribeFieldReports(
   );
 }
 
+/** Guarda un parte. La promesa se resuelve cuando el SERVIDOR lo confirma y se rechaza si lo rechaza (no traga el error). */
 export async function saveFieldReportToFirestore(report: FieldReport): Promise<void> {
   try {
     await setDoc(doc(db, 'fieldReports', report.id), sanitizeForFirestore(report), { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `fieldReports/${report.id}`);
+    throw error;
   }
 }
 
