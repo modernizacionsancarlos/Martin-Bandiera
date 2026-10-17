@@ -14,3 +14,15 @@ backups/
 *service-account*.json
 *-firebase-adminsdk-*.json
 dist-demo/
+
+# App de Android (Trusted Web Activity): nunca versionar claves de firma ni salidas de compilación
+android/*.keystore
+android/*.jks
+android/.test-keystore-password
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.aab
+android/*.apk
+android/*.idsig

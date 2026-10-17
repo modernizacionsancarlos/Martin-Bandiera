@@ -42,6 +42,20 @@ El pedido original era mover la firma a Storage para no chocar con el límite de
 - Las **fotos de remitos** (canales de WhatsApp y Drive) sí van a Storage, porque pesan cientos de KB; las sube el servidor y solo las ven administración y gerencia.
 - Si más adelante se quisiera Storage para firmas, hace falta una cola de subida sin conexión y reglas de Storage con permisos por rol (las reglas de Storage no leen la base con nombre propio de este proyecto; habría que usar permisos en el token).
 
+## Compilación de prueba de la app de Android (hecha)
+El proyecto Android vive en `android/` (Trusted Web Activity generada con Bubblewrap 1.27). Se compiló, se firmó con una clave **descartable de prueba** y se verificó:
+- Paquete `com.ucodigitallab.jobcampo`, versión 1.0.0 (código 1), nombre "JOB Campo", Android 7.0 o superior (API 24), objetivo Android 16 (API 36).
+- Salidas: `app-release-signed.apk` (aprox. 1,1 MB) para instalar de prueba, y `app-release-bundle.aab` (aprox. 1,2 MB), el formato que se sube a Play. Firma del APK verificada con `apksigner`.
+- Herramientas instaladas en tu usuario (sin permisos de administrador): Android SDK (plataforma 36, herramientas de compilación 36.1.0, herramientas de dispositivo) en `%LOCALAPPDATA%\Android\Sdk`, JDK 17 en `%LOCALAPPDATA%\Programs\jdk17` y JDK 21 en `...\jdk21`.
+- Para repetir: `powershell -ExecutionPolicy Bypass -File scriptsndroiduild-android.ps1`. El script ya resuelve cinco trabas que aparecieron (Java 17 obligatorio, carpeta `tools` del SDK, `NoDefaultCurrentDirectoryInExePath`, archivo de control de Bubblewrap y el mínimo de Android 24). Nunca editar `build.gradle` ni `twa-manifest.json` con `Set-Content -Encoding utf8` en PowerShell 5.1: agrega un carácter invisible (BOM) que rompe Gradle.
+
+**Qué NO se probó:** la app no se instaló ni se ejecutó en un teléfono ni en un emulador (no hay imagen de emulador instalada). La compilación de prueba apunta a `localhost:3101`, así que en un teléfono no abriría nada útil.
+
+**Antes de publicar de verdad**
+1. Con el dominio definido: cambiar `host`, `iconUrl`, `maskableIconUrl` y `webManifestUrl` en `android/twa-manifest.json` (o ejecutar `npx @bubblewrap/cli update`), subir `appVersionCode` en cada versión y recompilar.
+2. **Crear la clave de firma real** (clave de carga) y guardarla en un lugar seguro con copia: sin ella no se pueden publicar actualizaciones. La clave de prueba (`android/test-upload.keystore`) NO se debe usar para publicar y nunca se versiona (`.gitignore`). Se recomienda activar "Firma de apps de Play" al subir el primer `.aab`.
+3. Cargar las huellas SHA-256 en el servidor (`ANDROID_SHA256_CERT_FINGERPRINTS`, ver más abajo) y correr `scripts/check_play_ready.ts` sobre el dominio real.
+
 ## Cómo se publica en Google Play
 Hay dos caminos. Recomiendo el A.
 
