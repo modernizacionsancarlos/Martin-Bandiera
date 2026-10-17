@@ -49,7 +49,21 @@ El proyecto Android vive en `android/` (Trusted Web Activity generada con Bubble
 - Herramientas instaladas en tu usuario (sin permisos de administrador): Android SDK (plataforma 36, herramientas de compilación 36.1.0, herramientas de dispositivo) en `%LOCALAPPDATA%\Android\Sdk`, JDK 17 en `%LOCALAPPDATA%\Programs\jdk17` y JDK 21 en `...\jdk21`.
 - Para repetir: `powershell -ExecutionPolicy Bypass -File scriptsndroiduild-android.ps1`. El script ya resuelve cinco trabas que aparecieron (Java 17 obligatorio, carpeta `tools` del SDK, `NoDefaultCurrentDirectoryInExePath`, archivo de control de Bubblewrap y el mínimo de Android 24). Nunca editar `build.gradle` ni `twa-manifest.json` con `Set-Content -Encoding utf8` en PowerShell 5.1: agrega un carácter invisible (BOM) que rompe Gradle.
 
-**Qué NO se probó:** la app no se instaló ni se ejecutó en un teléfono ni en un emulador (no hay imagen de emulador instalada). La compilación de prueba apunta a `localhost:3101`, así que en un teléfono no abriría nada útil.
+### Prueba en el emulador de Android (hecha)
+Se instaló el emulador de Android y una imagen de Android 15 (API 35, con servicios de Google y Chrome) y se creó el teléfono virtual `jobcampo_test` (aceleración de Windows WHPX operativa, 2 GB de memoria). Resultado:
+- **La app se instala y se abre:** ícono "JOB" en el teléfono, pantalla de arranque "JOB CAMPO" y la web de la demo cargada dentro de la app (login, perfil Capataz, pantalla "Mis partes").
+- **Abre sin servidor:** con el servidor apagado, la app abre igual desde la copia guardada por el service worker (carga "Verificando sesión..." y llega al login; al entrar como Capataz muestra "Mis partes"). Es la prueba de que se puede abrir en la finca sin señal.
+- **Se vio con barra de dirección:** esperado en la prueba. Android solo oculta la barra si el dominio publica `assetlinks.json` con la huella de la app, y `localhost` no puede hacerlo. Con el dominio real y las huellas cargadas, se abre a pantalla completa.
+- **La primera carga es lenta en el emulador** (decenas de segundos: procesador virtual y dibujo por software). No es representativo de un teléfono real.
+- **La sesión de la demo no sobrevive al cerrar la app** (la demo la guarda en la memoria de la pestaña). En el sistema real, Firebase Auth conserva la sesión en el teléfono.
+
+**Cómo repetir la prueba**
+1. `npx vite build --mode demo --outDir dist-demo` y levantar `node scripts/android/serve-https.mjs dist-demo 3443` (o la configuración "demo-https"): la app de Android abre siempre `https://`, por eso hace falta HTTPS local con un certificado propio de prueba.
+2. Iniciar el teléfono virtual: `emulator -avd jobcampo_test -no-snapshot -no-audio -gpu swiftshader_indirect`.
+3. `adb root`, luego escribir en el teléfono `/data/local/tmp/chrome-command-line` con `chrome --disable-fre --no-first-run --no-default-browser-check --ignore-certificate-errors` (solo para la prueba: acepta el certificado propio) y `adb reverse tcp:3101 tcp:3443` (el reverse hay que hacerlo después de `adb root`, que lo borra).
+4. `adb install -r android/app-release-signed.apk` y abrir "JOB Campo".
+
+**Qué NO se probó:** un teléfono físico, la carga sin señal con Firestore real (la demo usa una base simulada en el teléfono), el botón "Instalar app" de Chrome, la verificación `assetlinks` (no es posible con `localhost`) ni el flujo de actualización de la app dentro de Android. La compilación de prueba apunta a `localhost:3101`: en un teléfono real no abriría nada útil.
 
 **Antes de publicar de verdad**
 1. Con el dominio definido: cambiar `host`, `iconUrl`, `maskableIconUrl` y `webManifestUrl` en `android/twa-manifest.json` (o ejecutar `npx @bubblewrap/cli update`), subir `appVersionCode` en cada versión y recompilar.

@@ -33,6 +33,16 @@
         "dist-demo"
       ],
       "port": 3101
+    },
+    {
+      "name": "demo-https",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/android/serve-https.mjs",
+        "dist-demo",
+        "3443"
+      ],
+      "port": 3443
     }
   ]
 }

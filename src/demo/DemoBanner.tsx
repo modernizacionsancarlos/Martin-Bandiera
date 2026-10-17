@@ -25,7 +25,7 @@ export const DemoBanner: React.FC = () => {
   return (
     <div
       role="status"
-      className="fixed bottom-3 left-1/2 -translate-x-1/2 z-[9999] flex items-center gap-3 rounded-full border border-amber-400/60 bg-amber-500 px-4 py-1.5 text-xs font-black uppercase tracking-wide text-slate-950 shadow-lg"
+      className="fixed bottom-2 left-1/2 -translate-x-1/2 z-[9999] flex w-max max-w-[calc(100vw-1rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-2xl border border-amber-400/60 bg-amber-500 px-3 py-1.5 text-center text-[10px] sm:text-xs font-black uppercase tracking-wide text-slate-950 shadow-lg"
     >
       <span>Modo demo · datos ficticios · sin conexión a la base real</span>
       <button
