@@ -409,7 +409,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
         record.clientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         record.siteLocation.toLowerCase().includes(searchTerm.toLowerCase()) ||
         record.workPoint.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        record.leadTech.toLowerCase().includes(searchTerm.toLowerCase());
+        (record.leadTech ? record.leadTech.toLowerCase().includes(searchTerm.toLowerCase()) : 'sin capataz'.includes(searchTerm.toLowerCase()));
 
       // Guardia
       const matchesGuardia =
@@ -945,6 +945,9 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
   };
 
   const handleUpdateLeadTech = (record: TechnicalAuditRecord, newLeadTech: string) => {
+    const hasNoCap = !newLeadTech || newLeadTech.trim() === '' || newLeadTech.toLowerCase() === 'sin capataz';
+    const cleanLeadTech = hasNoCap ? '' : newLeadTech;
+
     const costs = calculateAuditCosts(technicalParameters, {
       hoursWorked: record.hoursWorked ?? 4,
       travelHours: record.travelHours ?? 1,
@@ -957,17 +960,20 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       guardiaSubtype: record.guardiaSubtype,
       helpersCount: record.teamMembers?.length || record.helpers?.length || 0,
       materialsCost: record.materialsCost || 0,
-      leadTechName: newLeadTech,
+      leadTechName: cleanLeadTech,
       helperNames: record.helpers,
       teamMembers: record.teamMembers,
       workers,
       users
     });
 
-    const isCapatazLead = workers.some(w => w.name.toLowerCase() === newLeadTech.toLowerCase() && (w.role === 'Capataz' || w.category === 'Capataz')) || users.some(u => u.displayName.toLowerCase() === newLeadTech.toLowerCase() && (u.role === 'Capataz' || (u as any).category === 'Capataz'));
-    const matchedWorker = workers.find(w => w.name.toLowerCase() === newLeadTech.toLowerCase());
-    const matchedUser = users.find(u => u.displayName.toLowerCase() === newLeadTech.toLowerCase());
-    const defaultPct = (newLeadTech.toLowerCase().includes('morales') || newLeadTech.toLowerCase().includes('quinteros')) ? 20 : 25;
+    const isCapatazLead = !hasNoCap && (
+      workers.some(w => w.name.toLowerCase() === cleanLeadTech.toLowerCase() && (w.role === 'Capataz' || w.category === 'Capataz')) ||
+      users.some(u => u.displayName.toLowerCase() === cleanLeadTech.toLowerCase() && (u.role === 'Capataz' || (u as any).category === 'Capataz'))
+    );
+    const matchedWorker = cleanLeadTech ? workers.find(w => w.name.toLowerCase() === cleanLeadTech.toLowerCase()) : undefined;
+    const matchedUser = cleanLeadTech ? users.find(u => u.displayName.toLowerCase() === cleanLeadTech.toLowerCase()) : undefined;
+    const defaultPct = (cleanLeadTech.toLowerCase().includes('morales') || cleanLeadTech.toLowerCase().includes('quinteros')) ? 20 : 25;
     const capatazCommissionPct = isCapatazLead ? (matchedWorker?.capatazPercentage ?? matchedUser?.capatazPercentage ?? defaultPct) : undefined;
     const capatazProfit = isCapatazLead && capatazCommissionPct !== undefined ? calculateCapatazProfit(costs.laborDirectCost, capatazCommissionPct) : undefined;
     const cleanBaseCosts = roundCurrency((record.logisticsCost || 0) + costs.laborDirectCost + (record.materialsCost || 0));
@@ -976,7 +982,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     const newMargin = cleanBaseCosts > 0 ? Math.round((honorarios / cleanBaseCosts) * 100) : record.marginPercentage;
 
     updateTechnicalAuditRecord(record.id, {
-      leadTech: newLeadTech,
+      leadTech: cleanLeadTech,
       techPay: costs.techPay,
       laborDirectCost: costs.laborDirectCost,
       operatingCost: cleanBaseCosts,
@@ -2001,8 +2007,9 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                               }`}
                               title="Seleccionar Responsable Técnico / Capataz de Obra"
                             >
+                              <option value="">🚫 Sin Capataz (Solo Empleados)</option>
                               {/* Keep current leadTech if historical and not in capatacesNomina */}
-                              {record.leadTech && !capatacesNomina.some(c => c.name.toLowerCase() === record.leadTech?.toLowerCase()) && (
+                              {record.leadTech && record.leadTech !== 'Sin Capataz' && !capatacesNomina.some(c => c.name.toLowerCase() === record.leadTech?.toLowerCase()) && (
                                 <option value={record.leadTech}>{record.leadTech} (Asignado)</option>
                               )}
                               {capatacesNomina.map(c => (
@@ -2013,7 +2020,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                               <div className={`text-[10px] truncate max-w-[140px] font-medium mt-0.5 ${
                                 isColoredRow ? 'text-white/80' : 'text-slate-400'
                               }`}>
-                                Ayud: {record.helpers.join(', ')}
+                                {record.leadTech ? 'Ayud: ' : 'Cuadrilla: '}{record.helpers.join(', ')}
                               </div>
                             )}
                           </div>
@@ -2602,7 +2609,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
             <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 space-y-2 text-xs">
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Responsable Técnico:</span>
-                <span className="font-bold text-slate-900 dark:text-white">{selectedRecord.leadTech}</span>
+                <span className="font-bold text-slate-900 dark:text-white">{selectedRecord.leadTech || 'Sin Capataz (Solo Empleados)'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-400">Equipo de Ayudantes:</span>
@@ -2855,7 +2862,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500 font-bold">Técnico a Cargo:</span>
-                <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[220px]">{recordToDelete.leadTech}</span>
+                <span className="font-bold text-slate-800 dark:text-slate-200 truncate max-w-[220px]">{recordToDelete.leadTech || 'Sin Capataz (Solo Empleados)'}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-slate-500 font-bold">Estado:</span>

@@ -226,10 +226,15 @@ export function calculateAuditCosts(
   // Check if manual guardia input is active
   const hasManualGuardia = isGuardia && (guardiaMode !== undefined || guardiaAmount !== undefined);
   
+  // Check if job is without foreman/capataz (only crew employees)
+  const hasNoCapataz = !leadTechName || leadTechName.trim() === '' || leadTechName.toLowerCase() === 'sin capataz' || leadTechName.toLowerCase() === 'ninguno';
+
   // Base rates:
-  const leadBaseRate = customTechHourlyRate && customTechHourlyRate > 0
-    ? customTechHourlyRate
-    : getWorkerBaseHourlyRate(leadTechName, params.horaOficial || params.horaBase, workers, users);
+  const leadBaseRate = hasNoCapataz
+    ? 0
+    : (customTechHourlyRate && customTechHourlyRate > 0
+        ? customTechHourlyRate
+        : getWorkerBaseHourlyRate(leadTechName, params.horaOficial || params.horaBase, workers, users));
   const defaultOficialRate = params.horaOficial || params.horaBase || 9400;
   const defaultAyudanteRate = params.pagoAyudanteHora || 5500;
 
@@ -246,21 +251,31 @@ export function calculateAuditCosts(
     if (guardiaMode === 'fijo') {
       guardiaCost = manualVal;
       if (guardiaSubtype === 'plano') {
-        // Flat rate fee covers all labor
-        techPay = manualVal;
-        helperPay = 0;
+        // Flat rate fee covers labor
+        if (hasNoCapataz) {
+          techPay = 0;
+          helperPay = manualVal;
+        } else {
+          techPay = manualVal;
+          helperPay = 0;
+        }
       } else {
         // Surcharge added on top of base hours
-        techPay = roundCurrency(hoursWorked * leadBaseRate);
+        techPay = hasNoCapataz ? 0 : roundCurrency(hoursWorked * leadBaseRate);
       }
     } else {
       // 'por_hora': manual rate per hour worked
       guardiaCost = roundCurrency(hoursWorked * manualVal);
       if (guardiaSubtype === 'plano') {
-        techPay = guardiaCost;
-        helperPay = 0;
+        if (hasNoCapataz) {
+          techPay = 0;
+          helperPay = guardiaCost;
+        } else {
+          techPay = guardiaCost;
+          helperPay = 0;
+        }
       } else {
-        techPay = roundCurrency(hoursWorked * leadBaseRate);
+        techPay = hasNoCapataz ? 0 : roundCurrency(hoursWorked * leadBaseRate);
       }
     }
 
@@ -299,7 +314,7 @@ export function calculateAuditCosts(
   } else {
     // LEGACY / AUTOMATIC MULTIPLIER MODE:
     const techMultiplier = is100 ? 2.0 : is50 ? (params.guardiaMultiplier || 1.5) : 1.0;
-    techPay = roundCurrency(hoursWorked * leadBaseRate * techMultiplier);
+    techPay = hasNoCapataz ? 0 : roundCurrency(hoursWorked * leadBaseRate * techMultiplier);
 
     const helperMultiplier = is100 ? 1.6 : is50 ? 1.3 : 1.0;
     if (teamMembers && teamMembers.length > 0) {
