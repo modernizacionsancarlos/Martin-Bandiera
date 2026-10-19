@@ -525,8 +525,11 @@ export function normalizeTechnicalAuditRecord(raw: any): TechnicalAuditRecord {
   const operatingCost = Number(raw.operatingCost ?? (logisticsCost + laborDirectCost + materialsCost)) || 0;
   const helperPay = Number(raw.helperPay ?? 0) || 0;
   const techPay = Number(raw.techPay ?? (laborDirectCost > 0 ? Math.round(laborDirectCost * 0.6) : 0)) || 0;
-  const capatazCommissionPct = Number(raw.capatazCommissionPct ?? 10) || 10;
-  const capatazProfit = Number(raw.capatazProfit ?? Math.round(laborDirectCost * (capatazCommissionPct / 100))) || 0;
+  // Un trabajo cargado sin capataz (leadTech vacío a propósito) no tiene comisión: no se le inventa el 10 % por defecto.
+  const rawLead = typeof raw.leadTech === 'string' ? raw.leadTech.trim().toLowerCase() : undefined;
+  const hasNoCapataz = rawLead !== undefined && (rawLead === '' || rawLead === 'sin capataz');
+  const capatazCommissionPct = hasNoCapataz ? undefined : Number(raw.capatazCommissionPct ?? 10) || 10;
+  const capatazProfit = hasNoCapataz ? undefined : Number(raw.capatazProfit ?? Math.round(laborDirectCost * ((capatazCommissionPct ?? 10) / 100))) || 0;
   const baseOperational = logisticsCost + techPay + helperPay + materialsCost;
   const honorarios = Number(raw.honorarios !== undefined ? raw.honorarios : (billedPrice > baseOperational ? (billedPrice - baseOperational) : 0)) || 0;
 

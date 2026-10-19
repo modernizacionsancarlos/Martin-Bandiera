@@ -269,7 +269,7 @@ export const Header: React.FC<HeaderProps> = ({
               <FileSpreadsheet className="w-3.5 h-3.5" />
               Finanzas
               {!canViewFinancials && (
-                <Lock className="w-3 h-3 text-amber-500 ml-0.5" title="Restringido a Gerencia" />
+                <span title="Restringido a Gerencia"><Lock className="w-3 h-3 text-amber-500 ml-0.5" /></span>
               )}
             </button>
 

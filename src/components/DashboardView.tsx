@@ -44,8 +44,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       propOnNavigateTab(tab);
     }
   };
-  const { projects, maintenanceServices, materials, workers, canViewFinancials } = useData();
-  const { currentUser, isCapataz, isEmpleado, canResetSystem } = useAuth();
+  const { projects, maintenanceServices, materials, workers } = useData();
+  const { currentUser, isCapataz, isEmpleado, canResetSystem, canViewFinancials } = useAuth();
   const { themeClasses } = useTheme();
 
   const activeProjectsCount = projects.filter(p => p.status === 'En Ejecución').length;

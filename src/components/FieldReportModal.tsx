@@ -496,6 +496,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         displayName: trimmed,
         email: safeEmail,
         role: 'Empleado',
+        companyName: 'JOB Martin Bandiera S.A.',
         category: newHelperRole === 'Oficial' ? 'Oficial' : 'Ayudante',
         isAdministrative: false,
         specialty: newHelperRole === 'Oficial' ? 'Oficial Especialista' : 'Ayudante de Cuadrilla',

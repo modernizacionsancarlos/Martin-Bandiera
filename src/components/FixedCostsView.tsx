@@ -61,7 +61,7 @@ export const FixedCostsView: React.FC = () => {
 
   const handleResetDefaults = () => {
     if (window.confirm('¿Restablecer los costos fijos a los valores estándar de Bandiera?')) {
-      setForm(DEFAULT_TECHNICAL_PARAMETERS);
+      setForm({ ...DEFAULT_TECHNICAL_PARAMETERS, horaOficial: DEFAULT_TECHNICAL_PARAMETERS.horaOficial || 9400 });
       updateTechnicalParameters(DEFAULT_TECHNICAL_PARAMETERS);
       setSavedSuccess(true);
       setTimeout(() => setSavedSuccess(false), 3000);

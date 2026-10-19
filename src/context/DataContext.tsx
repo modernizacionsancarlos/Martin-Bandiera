@@ -142,7 +142,7 @@ interface DataContextType {
   updateTechnicalParameters: (updates: Partial<TechnicalCostParameters>) => void;
 
   // Technical Audit Records Actions
-  addTechnicalAuditRecord: (record: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => void;
+  addTechnicalAuditRecord: (record: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & Partial<Pick<TechnicalAuditRecord, 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'>> & { remitoId?: string }) => void;
   bulkAddTechnicalAuditRecords: (records: Partial<TechnicalAuditRecord>[]) => void;
   bulkUpdateAuditRecordDescriptions: (updates: { id: string; description: string }[]) => Promise<number>;
   /** Archiva o desarchiva remitos cobrados en una sola operación. Devuelve cuántos cambiaron. */
@@ -792,7 +792,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const discardFieldReport = (id: string, reason?: string) =>
     patchFieldReport(id, { status: 'Descartado', discardReason: reason || undefined, convertedByName: currentUser?.displayName });
 
-  const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => {
+  const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & Partial<Pick<TechnicalAuditRecord, 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'>> & { remitoId?: string }) => {
     const id = `AUD-${Date.now().toString().slice(-4)}`;
     
     let remitoId = recordInput.remitoId;
@@ -1532,6 +1532,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         displayName: worker.name,
         email: worker.email || `${norm.replace(/\s+/g, '.')}@bandiera.com`,
         role: worker.role,
+        companyName: 'JOB Martin Bandiera S.A.',
         category: worker.category,
         isAdministrative: worker.isAdministrative || worker.category === 'Administrativo',
         specialty: worker.specialty || worker.cargo || (worker.category === 'Administrativo' ? 'Administración & Gestión' : worker.role === 'Capataz' ? 'Capataz de Obra' : 'Ayudante de Cuadrilla'),
