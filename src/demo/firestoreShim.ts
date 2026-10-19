@@ -135,24 +135,57 @@ function mergeInto(target: DocData, incoming: DocData): DocData {
 // Igual que el caché persistente de Firestore: sin conexión, la escritura se aplica en el dispositivo
 // (la pantalla la muestra enseguida) y la promesa queda abierta hasta que vuelve la conexión.
 let offline = false;
-const pendingDocs = new Set<string>();
+const PENDING_KEY = 'bandiera_demo_pending_v1';
+// Igual que Firestore, los documentos pendientes de envío sobreviven a cerrar y reabrir la app.
+const pendingDocs = new Set<string>(
+  (() => {
+    try {
+      return JSON.parse(localStorage.getItem(PENDING_KEY) || '[]') as string[];
+    } catch {
+      return [];
+    }
+  })()
+);
 let waiters: Array<() => void> = [];
+
+const persistPending = () => {
+  try {
+    localStorage.setItem(PENDING_KEY, JSON.stringify([...pendingDocs]));
+  } catch {
+    // ignore
+  }
+};
+
+/** Sin señal: por el interruptor de la demo o porque el dispositivo realmente no tiene conexión (modo avión). */
+function isOffline(): boolean {
+  return offline || (typeof navigator !== 'undefined' && navigator.onLine === false);
+}
 
 export function isDemoOffline(): boolean {
   return offline;
+}
+
+function flushIfOnline() {
+  if (isOffline()) return;
+  pendingDocs.clear();
+  persistPending();
+  const toRelease = waiters;
+  waiters = [];
+  notifyAll();
+  toRelease.forEach(release => release());
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', flushIfOnline);
+  // Se reabrió la app con conexión y quedaban envíos pendientes de la sesión anterior: se confirman.
+  window.setTimeout(flushIfOnline, 0);
 }
 
 export function setDemoOffline(value: boolean) {
   if (offline === value) return;
   offline = value;
   if (typeof window !== 'undefined') window.dispatchEvent(new Event(value ? 'offline' : 'online'));
-  if (!value) {
-    pendingDocs.clear();
-    const toRelease = waiters;
-    waiters = [];
-    notifyAll();
-    toRelease.forEach(release => release());
-  }
+  if (!value) flushIfOnline();
 }
 
 // ---------------------------------------------------------------- snapshots
@@ -179,7 +212,8 @@ function makeCollectionSnapshot(ref: CollectionRef) {
     empty: docs.length === 0,
     forEach: (cb: (d: any) => void) => docs.forEach(cb),
     docChanges: () => [],
-    metadata: { fromCache: false, hasPendingWrites: false }
+    // Sin conexión, Firestore responde desde el caché del dispositivo: no confirma nada del servidor.
+    metadata: { fromCache: isOffline(), hasPendingWrites: false }
   };
 }
 
@@ -217,10 +251,11 @@ async function guardWrite() {
 }
 
 async function commitWrite(apply: () => void, collections: Iterable<string>, docPaths: string[]) {
-  if (offline) {
+  if (isOffline()) {
     apply();
     persist();
     docPaths.forEach(p => pendingDocs.add(p));
+    persistPending();
     for (const c of collections) notifyCollection(c);
     await new Promise<void>(release => waiters.push(release));
     return;

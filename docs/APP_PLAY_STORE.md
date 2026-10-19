@@ -14,7 +14,7 @@
 
 ## Que no se pierda ningún parte (bandeja de salida)
 La base guarda sin señal y envía sola, pero si el servidor **rechaza** un parte (sesión vencida, cuenta dada de baja, regla de seguridad), Firestore descarta la escritura. Para que el capataz nunca pierda lo que cargó en la finca (`src/services/fieldOutbox.ts`):
-- Cada parte queda en una **bandeja de salida del teléfono** hasta que el servidor lo confirma.
+- Cada parte queda en una **bandeja de salida del teléfono** (guardada en **IndexedDB**, no en `localStorage`) hasta que el servidor lo confirma. El parte se guarda primero en la bandeja y recién después se envía.
 - Si el servidor lo rechaza, el parte sigue visible como "No se pudo enviar", con el motivo y el botón "Reintentar envío".
 - Al abrir la app se **reconcilia** con lo que confirmó el servidor: lo recibido se borra de la bandeja; lo que no está ni figura pendiente se vuelve a enviar (mismo identificador: no se duplica).
 - Cerrar sesión con partes sin enviar pide confirmación.
@@ -63,7 +63,18 @@ Se instaló el emulador de Android y una imagen de Android 15 (API 35, con servi
 3. `adb root`, luego escribir en el teléfono `/data/local/tmp/chrome-command-line` con `chrome --disable-fre --no-first-run --no-default-browser-check --ignore-certificate-errors` (solo para la prueba: acepta el certificado propio) y `adb reverse tcp:3101 tcp:3443` (el reverse hay que hacerlo después de `adb root`, que lo borra).
 4. `adb install -r android/app-release-signed.apk` y abrir "JOB Campo".
 
-**Qué NO se probó:** un teléfono físico, la carga sin señal con Firestore real (la demo usa una base simulada en el teléfono), el botón "Instalar app" de Chrome, la verificación `assetlinks` (no es posible con `localhost`) ni el flujo de actualización de la app dentro de Android. La compilación de prueba apunta a `localhost:3101`: en un teléfono real no abriría nada útil.
+### Prueba de carga sin conexión en el emulador (hecha)
+Escenario completo con **modo avión real** del teléfono virtual (sin usar el interruptor de la demo):
+1. Con señal: la app baja la versión nueva (service worker actualizado y sus archivos guardados) y se entra como Capataz.
+2. Modo avión: la app muestra "Sin señal", se carga un parte y queda "Sin enviar" (1 por enviar), con copia en la bandeja de salida.
+3. **Cierre forzado de la app** a unos 3 segundos de guardar, **servidor apagado**, y reapertura sin conexión: la app abre desde su copia guardada, el parte sigue ahí marcado "Sin enviar" y la bandeja lo conserva.
+4. Vuelve la señal: en pocos segundos el parte pasa a "Enviado · en revisión", la bandeja queda vacía y el indicador muestra "Guardado ✓".
+
+**Hallazgo importante de la prueba:** en la primera pasada el parte cargado sin señal se **perdió** al cerrar la app a la fuerza. La causa: Chrome no escribe `localStorage` a disco de inmediato. Un experimento controlado en el mismo teléfono virtual (marcadores escritos 32, 10, 4 y 1 segundos antes del cierre forzado) mostró que **`localStorage` perdió todos, incluso el de 33 segundos antes, e IndexedDB conservó todos**. Por eso la bandeja de salida se pasó a IndexedDB (con la misma garantía que ya usa Firestore para sus escrituras pendientes). La base simulada de la demo sigue usando `localStorage`: en la demo, un cierre forzado puede perder datos de la demo; el sistema real no.
+
+Otros ajustes que dejó la prueba: la demo ahora distingue "sin conexión" real (modo avión) de la lectura del caché y conserva los envíos pendientes al reabrir; todo parte que sigue en la bandeja se marca "Sin enviar"; la franja de la demo ya no tapa el botón "Nuevo parte".
+
+**Qué NO se probó:** un teléfono físico, la carga sin señal con **Firestore real** (la demo usa una base simulada en el teléfono: se probó la bandeja de salida y la interfaz, no el caché real de Firestore), el botón "Instalar app" de Chrome, la verificación `assetlinks` (no es posible con `localhost`) ni el flujo de actualización de la app dentro de Android. La compilación de prueba apunta a `localhost:3101`: en un teléfono real no abriría nada útil.
 
 **Antes de publicar de verdad**
 1. Con el dominio definido: cambiar `host`, `iconUrl`, `maskableIconUrl` y `webManifestUrl` en `android/twa-manifest.json` (o ejecutar `npx @bubblewrap/cli update`), subir `appVersionCode` en cada versión y recompilar.

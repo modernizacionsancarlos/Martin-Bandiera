@@ -346,6 +346,8 @@ function useAppUpdate() {
 export const FieldApp: React.FC = () => {
   const { currentUser, logout } = useAuth();
   const { fieldReports, unsyncedFieldReportIds, outboxEntries, retryFieldReport } = useData();
+  // Todo parte que sigue en la bandeja de salida todavía no fue confirmado por el servidor.
+  const inOutbox = useMemo(() => new Set(outboxEntries.map(e => e.report.id)), [outboxEntries]);
   const appUpdated = useAppUpdate();
   const { online, pending } = useSyncStatus();
   const { canInstall, install } = useInstallPrompt();
@@ -440,7 +442,7 @@ export const FieldApp: React.FC = () => {
                     <RefreshCw className="w-3.5 h-3.5" /> Reintentar envío
                   </button>
                 </div>
-              ) : unsyncedFieldReportIds.has(r.id) ? (
+              ) : unsyncedFieldReportIds.has(r.id) || inOutbox.has(r.id) ? (
                 <div className="mt-3 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-black bg-slate-500/15 text-slate-700 dark:text-slate-300 border-slate-500/30">
                   <CloudOff className="w-3.5 h-3.5" /> Sin enviar · se envía cuando haya señal
                 </div>

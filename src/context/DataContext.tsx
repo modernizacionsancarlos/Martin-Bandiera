@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
-import { createFieldOutbox, newFieldReportId, type OutboxEntry } from '../services/fieldOutbox';
+import { createFieldOutbox, createIdbStorage, newFieldReportId, type OutboxEntry } from '../services/fieldOutbox';
 import { describeWriteError } from '../services/syncStatus';
 import { useAuth, getDeletedUsersTombstone, unmarkUserAsDeletedLocally, recordDeletedUserLocally } from './AuthContext';
 import {
@@ -254,12 +254,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [fieldReports, setFieldReports] = useState<FieldReport[]>([]);
   const [unsyncedFieldReportIds, setUnsyncedFieldReportIds] = useState<Set<string>>(new Set());
   const outbox = useMemo(
-    () => (currentUser?.authUid ? createFieldOutbox(window.localStorage, currentUser.authUid) : null),
+    () => (currentUser?.authUid ? createFieldOutbox(createIdbStorage(), currentUser.authUid) : null),
     [currentUser?.authUid]
   );
   const outboxRef = useRef(outbox);
   outboxRef.current = outbox;
-  const [outboxEntries, setOutboxEntries] = useState<OutboxEntry[]>(() => outbox?.list() ?? []);
+  const [outboxEntries, setOutboxEntries] = useState<OutboxEntry[]>([]);
   useEffect(() => {
     if (!outbox) return;
     setOutboxEntries(outbox.list());
@@ -465,8 +465,12 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Con una lectura confirmada por el servidor se reconcilia la bandeja: lo recibido se borra y lo perdido se reenvía.
         const box = outboxRef.current;
         if (box && confirmedByServer) {
-          const { resubmit } = box.reconcile(new Set(remote.map(r => r.id)), unsynced);
-          resubmit.forEach(report => submitFieldReportRef.current(report));
+          const serverIds = new Set(remote.map(r => r.id));
+          // La bandeja se lee del disco del teléfono: se espera a que esté cargada antes de comparar.
+          box.ready.then(() => {
+            const { resubmit } = box.reconcile(serverIds, unsynced);
+            resubmit.forEach(report => submitFieldReportRef.current(report));
+          });
         }
       },
       isFieldRole ? currentUser?.authUid : undefined
@@ -758,8 +762,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submittedByName: currentUser.displayName
     };
     setFieldReports(prev => [report, ...prev]);
-    outboxRef.current?.add(report);
-    submitFieldReport(report);
+    // Primero la copia duradera en el teléfono y recién después el envío: si la app se cierra de golpe, el parte no se pierde.
+    const box = outboxRef.current;
+    if (box) box.add(report).finally(() => submitFieldReport(report));
+    else submitFieldReport(report);
   };
 
   const retryFieldReport = (id: string) => {

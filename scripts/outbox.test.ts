@@ -8,9 +8,25 @@ const expect = (name: string, ok: boolean, detail = '') => {
   console.log(ok ? '  ok   ' : '  FALLA', name, ok ? '' : detail);
 };
 
-const memory = (): OutboxStorage & { data: Map<string, string> } => {
+/** Almacén en memoria con una demora, como un disco real: sirve para probar el orden y la durabilidad. */
+const memory = (delayMs = 0): OutboxStorage & { data: Map<string, string>; saves: number } => {
   const data = new Map<string, string>();
-  return { data, getItem: k => data.get(k) ?? null, setItem: (k, v) => void data.set(k, v) };
+  const store = {
+    data,
+    saves: 0,
+    load: async (k: string) => (await new Promise(r => setTimeout(r, delayMs)), data.get(k) ?? null),
+    save: async (k: string, v: string) => {
+      await new Promise(r => setTimeout(r, delayMs));
+      store.saves++;
+      data.set(k, v);
+    }
+  };
+  return store;
+};
+const open = async (storage: OutboxStorage, owner = 'a1') => {
+  const box = createFieldOutbox(storage, owner);
+  await box.ready;
+  return box;
 };
 const report = (id: string): FieldReport => ({
   id, date: '2026-10-17', clientName: 'C', siteLocation: '', workPoint: 'P', isGuardia: false, horaEntrada: '08:00', horaSalida: '12:00',
@@ -19,29 +35,41 @@ const report = (id: string): FieldReport => ({
 });
 
 console.log('Alta y baja');
-const store = memory();
-const box = createFieldOutbox(store, 'a1');
-box.add(report('P1'));
-box.add(report('P2'));
+const store = memory(2);
+const box = await open(store);
+await box.add(report('P1'));
+await box.add(report('P2'));
 expect('guarda los partes enviados', box.list().length === 2);
-box.add(report('P1'));
+await box.add(report('P1'));
 expect('enviar dos veces el mismo parte no lo duplica', box.list().length === 2);
-box.remove('P1');
+await box.remove('P1');
 expect('al confirmar el servidor se borra', box.list().map(e => e.report.id).join() === 'P2');
-expect('sobrevive a cerrar y abrir la app (misma clave de almacenamiento)', createFieldOutbox(store, 'a1').list().length === 1);
-expect('cada usuario tiene su propia bandeja', createFieldOutbox(store, 'otro').list().length === 0);
+expect('sobrevive a cerrar y abrir la app (lee lo guardado en el disco)', (await open(store)).list().length === 1);
+expect('cada usuario tiene su propia bandeja', (await open(store, 'otro')).list().length === 0);
+
+console.log('Durabilidad');
+const slow = memory(30);
+const boxSlow = await open(slow);
+const pendingAdd = boxSlow.add(report('D1'));
+expect('el parte se ve en pantalla al instante, antes de que termine de escribirse', boxSlow.list().length === 1 && slow.data.size === 0);
+await pendingAdd;
+expect('add se resuelve recién cuando el disco confirmó la escritura', slow.data.size === 1);
+const burst = memory(5);
+const boxBurst = await open(burst);
+await Promise.all(['B1', 'B2', 'B3', 'B4'].map(id => boxBurst.add(report(id))));
+expect('varios partes cargados seguidos no se pisan entre sí', (await open(burst)).list().length === 4, String((await open(burst)).list().length));
 
 console.log('Rechazo del servidor y reintento');
-box.markFailed('P2', 'No tiene permiso para guardar este cambio.');
+await box.markFailed('P2', 'No tiene permiso para guardar este cambio.');
 expect('un parte rechazado queda guardado con el motivo', box.list()[0].failed === 'No tiene permiso para guardar este cambio.');
 const again = box.retry('P2');
 expect('reintentar devuelve el parte, borra el motivo y cuenta el intento', again?.id === 'P2' && box.list()[0].failed === undefined && box.list()[0].attempts === 2);
 expect('reintentar un parte inexistente no rompe', box.retry('NOPE') === null);
 
 console.log('Reconciliación con lo que confirmó el servidor');
-const r = createFieldOutbox(memory(), 'a1');
-['A', 'B', 'C', 'D', 'E'].forEach(id => r.add(report(id)));
-r.markFailed('E', 'rechazado');
+const r = await open(memory(), 'a1');
+for (const id of ['A', 'B', 'C', 'D', 'E']) await r.add(report(id));
+await r.markFailed('E', 'rechazado');
 r.setInFlight('D', true);
 const res = r.reconcile(new Set(['A']), new Set(['B']));
 expect('el que el servidor ya tiene se confirma y se borra', res.confirmed.join() === 'A' && !r.list().some(e => e.report.id === 'A'));
@@ -55,21 +83,23 @@ expect('cuando el servidor confirma todo, la bandeja queda vacía (también el q
 
 console.log('Datos dañados y avisos');
 const bad = memory();
-bad.setItem('job_campo_outbox_v1:a1', '{no es json');
-expect('una bandeja dañada se lee como vacía', createFieldOutbox(bad, 'a1').list().length === 0);
+bad.data.set('job_campo_outbox_v1:a1', '{no es json');
+expect('una bandeja dañada se lee como vacía', (await open(bad)).list().length === 0);
 let calls = 0;
-const watched = createFieldOutbox(memory(), 'a1');
+const watched = await open(memory());
 const off = watched.subscribe(() => calls++);
-watched.add(report('X'));
-watched.markFailed('X', 'm');
-watched.remove('X');
+await watched.add(report('X'));
+await watched.markFailed('X', 'm');
+await watched.remove('X');
 off();
-watched.add(report('Y'));
+await watched.add(report('Y'));
 expect('avisa a la pantalla en cada cambio y deja de avisar al desuscribirse', calls === 3, String(calls));
-const full: OutboxStorage = { getItem: () => null, setItem: () => { throw new Error('QuotaExceeded'); } };
+const full: OutboxStorage = { load: async () => null, save: async () => { throw new Error('QuotaExceeded'); } };
 let threw = false;
-try { createFieldOutbox(full, 'a1').add(report('Z')); } catch { threw = true; }
+try { await (await open(full)).add(report('Z')); } catch { threw = true; }
 expect('si el teléfono no tiene espacio no rompe la carga del parte', !threw);
+const broken: OutboxStorage = { load: async () => { throw new Error('disco ilegible'); }, save: async () => {} };
+expect('si no se puede leer el disco, arranca con la bandeja vacía', (await open(broken)).list().length === 0);
 
 console.log('Identificadores');
 const ids = new Set(Array.from({ length: 2000 }, () => newFieldReportId()));
