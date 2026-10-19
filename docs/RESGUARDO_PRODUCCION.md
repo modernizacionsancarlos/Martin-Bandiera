@@ -10,6 +10,7 @@ Este documento describe las copias que existen, cómo hacer una nueva, cómo com
 |---|---|---|---|
 | Copias diarias de Firestore | Toda la base, 7 días | Google Cloud (programadas) | Activas desde el 14/10/2026 |
 | Recuperación a un instante (PITR) | Cualquier momento de los últimos 7 días | Google Cloud | Activa desde el 14/10/2026 |
+| Copia diaria automática en la nube (sección 8) | Toda la base, cada día a las 23:59, durante 90 días | Depósito privado de Cloud Storage del proyecto | **Preparada, sin instalar** |
 | Copia local verificable (este documento) | Toda la base en archivos, con huella digital por archivo | Carpeta `backups/` de esta computadora | Disponible; la última copia real es del 14/10/2026 |
 | Copia fuera de esta computadora | La carpeta anterior, copiada a otro lugar | Pendiente de elegir (disco externo o Drive de la empresa) | **Pendiente** |
 | Código | El sistema | GitHub | Solo el código; no contiene datos |
@@ -92,3 +93,93 @@ Los manifiestos de las tres copias anteriores se crearon el 19/10/2026 a partir 
 | 2026-10-14 (la más reciente) | 1.049 |
 
 Han pasado varios días desde la última: antes de aplicar cambios, haga una copia nueva (sección 3).
+
+## 8. Copia diaria automática a las 23:59 (en la nube)
+
+### Por qué no en Firebase Hosting
+
+Hosting publica archivos en internet: cualquiera con la dirección podría bajarlos. Las copias contienen clientes, precios, remitos y usuarios. Por eso el trabajo guarda las copias en un depósito **privado** de Cloud Storage, que forma parte del mismo proyecto de Firebase y se ve en la pestaña Storage de la consola. Nunca se publica nada.
+
+### Cómo funciona
+
+- Un trabajo de Cloud Run (`resguardo-nube/index.mjs`) lee todas las colecciones con una cuenta de servicio de solo lectura sobre Firestore.
+- Cloud Scheduler lo dispara todos los días a las 23:59, hora de Mendoza.
+- Guarda los archivos en `gs://<depósito>/resguardos/<fecha>/`, vuelve a leerlos para comprobar que se guardaron bien, y recién entonces escribe `MANIFIESTO.json`. Una carpeta sin manifiesto es una copia incompleta y se ignora.
+- Si la base tiene más de 10 % menos documentos que en la copia anterior, el trabajo termina en error, aunque la copia se guarda. Un borrado masivo se nota al día siguiente en el historial de ejecuciones.
+- El nombre de la carpeta usa la hora UTC: la copia de las 23:59 de Mendoza lleva la fecha del día siguiente, entre las 02:59 y 03:00.
+- Usa el Admin SDK, que no depende de las reglas de seguridad. Sigue funcionando después de publicar las reglas nuevas. **El comando manual `npm run resguardo:exportar` no:** usa el SDK de cliente sin sesión y dejará de leer cuando se cierren las reglas. Después de ese paso, use la copia automática y `descargar`.
+- El formato es el mismo que el de la copia manual. Una copia descargada se verifica, compara y restaura con `scripts/resguardo.mjs`.
+
+### Instalación (la ejecuta el dueño del proyecto)
+
+Nada de esto está instalado: es un cambio en el proyecto de producción. Se hace una vez, desde Cloud Shell (consola de Google Cloud, ícono `>_`) o con `gcloud` instalado, con la cuenta Owner. Reemplace los valores si cambian.
+
+```bash
+PROYECTO=gen-lang-client-0133313162
+REGION=us-west1
+DEPOSITO=gen-lang-client-0133313162-resguardos
+BASE=ai-studio-jobmartinbandier-d44d882d-1592-4457-b7d7-d21ee05f7b01
+CUENTA=resguardo-sa@$PROYECTO.iam.gserviceaccount.com
+
+gcloud config set project $PROYECTO
+gcloud services enable run.googleapis.com cloudscheduler.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+
+# 1. Depósito privado: sin acceso público, con historial de versiones y borrado automático a los 90 días.
+gcloud storage buckets create gs://$DEPOSITO --location=$REGION --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets update gs://$DEPOSITO --versioning
+echo '{"rule":[{"action":{"type":"Delete"},"condition":{"age":90}}]}' > lifecycle.json
+gcloud storage buckets update gs://$DEPOSITO --lifecycle-file=lifecycle.json
+
+# 2. Cuenta de servicio con lo mínimo: leer Firestore y crear/leer objetos. No puede borrar ni pisar copias.
+gcloud iam service-accounts create resguardo-sa --display-name="Copia diaria de Firestore"
+gcloud projects add-iam-policy-binding $PROYECTO --member=serviceAccount:$CUENTA --role=roles/datastore.viewer
+gcloud storage buckets add-iam-policy-binding gs://$DEPOSITO --member=serviceAccount:$CUENTA --role=roles/storage.objectCreator
+gcloud storage buckets add-iam-policy-binding gs://$DEPOSITO --member=serviceAccount:$CUENTA --role=roles/storage.objectViewer
+
+# 3. Trabajo de Cloud Run (se construye desde la carpeta resguardo-nube del repositorio).
+gcloud run jobs deploy resguardo-diario --source resguardo-nube --region $REGION --service-account $CUENTA \
+  --set-env-vars BACKUP_BUCKET=$DEPOSITO,FIRESTORE_DATABASE_ID=$BASE,PROJECT_ID=$PROYECTO \
+  --max-retries 1 --task-timeout 15m
+
+# 4. Disparo diario a las 23:59 de Mendoza.
+gcloud run jobs add-iam-policy-binding resguardo-diario --region $REGION --member=serviceAccount:$CUENTA --role=roles/run.invoker
+gcloud scheduler jobs create http resguardo-diario-2359 --location $REGION --schedule "59 23 * * *" --time-zone "America/Argentina/Mendoza" \
+  --uri "https://run.googleapis.com/v2/projects/$PROYECTO/locations/$REGION/jobs/resguardo-diario:run" \
+  --http-method POST --oauth-service-account-email $CUENTA
+```
+
+### Probarlo la primera vez
+
+```bash
+gcloud run jobs execute resguardo-diario --region us-west1 --wait
+```
+
+Debe terminar bien y dejar una carpeta en el depósito con 14 o más archivos y su `MANIFIESTO.json`. Si la prueba falla, el historial de ejecuciones del trabajo muestra el mensaje exacto.
+
+### Usarlo
+
+Con la sesión de Google Cloud iniciada en esta computadora (`gcloud auth application-default login`):
+
+```bash
+# PowerShell
+$env:BACKUP_BUCKET="gen-lang-client-0133313162-resguardos"
+$env:FIRESTORE_DATABASE_ID="ai-studio-jobmartinbandier-d44d882d-1592-4457-b7d7-d21ee05f7b01"
+$env:PROJECT_ID="gen-lang-client-0133313162"
+node resguardo-nube/index.mjs listar
+node resguardo-nube/index.mjs descargar <nombre-de-la-copia>
+npm run resguardo:verificar backups/<nombre-de-la-copia>
+```
+
+El usuario que descarga necesita el rol de lector de objetos del depósito.
+
+### Costo y límites
+
+Cada copia pesa alrededor de 1 MB. Con retención de 90 días son unos 100 MB: centavos de dólar por mes. Cloud Scheduler incluye 3 trabajos gratis. El trabajo necesita que el proyecto tenga facturación activa, y la tiene desde el 14/10/2026.
+
+### Avisos
+
+El trabajo termina en error si falla algo o si la base pierde más de 10 % de sus documentos. Para recibir un correo en esos casos, cree una alerta en Cloud Monitoring sobre las ejecuciones fallidas del trabajo `resguardo-diario`. Ese paso se hace en la consola y queda a cargo del dueño del proyecto.
+
+### Pruebas hechas
+
+`npm run test:resguardo-nube` ensaya el trabajo contra emuladores de Firestore y Storage: la copia queda completa y verificada, aparece en el listado, se descarga y verifica con la herramienta local, coincide con la base, y el trabajo avisa si la base perdió documentos. No se ejecutó contra la nube real porque nada está instalado todavía.

@@ -1,0 +1,5 @@
+{
+  "firestore": { "rules": "open.rules" },
+  "storage": { "rules": "open-storage.rules" },
+  "emulators": { "firestore": { "port": 8091 }, "storage": { "port": 9199 }, "ui": { "enabled": false } }
+}

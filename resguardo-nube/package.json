@@ -1,0 +1,10 @@
+{
+  "name": "resguardo-nube",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Copia diaria de Firestore a un depósito privado de Cloud Storage (trabajo de Cloud Run).",
+  "engines": { "node": ">=20" },
+  "scripts": { "start": "node index.mjs" },
+  "dependencies": { "firebase-admin": "^14.5.0" }
+}

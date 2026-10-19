@@ -15,7 +15,8 @@
     "resguardo:exportar": "node scripts/resguardo.mjs exportar",
     "resguardo:verificar": "node scripts/resguardo.mjs verificar",
     "resguardo:comparar": "node scripts/resguardo.mjs comparar",
-    "test:resguardo": "cd scripts/rules-test && npx firebase emulators:exec --only firestore --config ../resguardo-ensayo/firebase.json --project demo-resguardo \"bash ../resguardo-ensayo/ensayo.sh\""
+    "test:resguardo": "cd scripts/rules-test && npx firebase emulators:exec --only firestore --config ../resguardo-ensayo/firebase.json --project demo-resguardo \"bash ../resguardo-ensayo/ensayo.sh\"",
+    "test:resguardo-nube": "cd scripts/rules-test && npx firebase emulators:exec --only firestore,storage --config ../resguardo-ensayo/firebase-nube.json --project demo-resguardo \"bash ../resguardo-ensayo/ensayo-nube.sh\""
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
