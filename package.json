@@ -11,7 +11,11 @@
     "clean": "rm -rf dist server.js",
     "backup": "bash scripts/backup_to_server.sh",
     "lint": "tsc --noEmit",
-    "demo": "node scripts/demo.mjs"
+    "demo": "node scripts/demo.mjs",
+    "resguardo:exportar": "node scripts/resguardo.mjs exportar",
+    "resguardo:verificar": "node scripts/resguardo.mjs verificar",
+    "resguardo:comparar": "node scripts/resguardo.mjs comparar",
+    "test:resguardo": "cd scripts/rules-test && npx firebase emulators:exec --only firestore --config ../resguardo-ensayo/firebase.json --project demo-resguardo \"bash ../resguardo-ensayo/ensayo.sh\""
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

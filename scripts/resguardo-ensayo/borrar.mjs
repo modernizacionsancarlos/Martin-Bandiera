@@ -1,0 +1,12 @@
+import { initializeApp } from 'firebase/app';
+import { getFirestore, connectFirestoreEmulator, collection, getDocs, deleteDoc, doc, updateDoc } from 'firebase/firestore';
+import * as fs from 'node:fs';
+const config = JSON.parse(fs.readFileSync('./firebase-applet-config.json', 'utf8'));
+const db = getFirestore(initializeApp(config, 'ensayo'), process.argv[2]);
+connectFirestoreEmulator(db, 'localhost', 8091);
+const audits = (await getDocs(collection(db, 'auditRecords'))).docs.slice(0, 2);
+for (const d of audits) await deleteDoc(doc(db, 'auditRecords', d.id));
+const w = (await getDocs(collection(db, 'workers'))).docs[0];
+await updateDoc(doc(db, 'workers', w.id), { name: 'MODIFICADO EN ENSAYO' });
+console.log('borrados', audits.map(d => d.id).join(','), '| modificado', w.id);
+process.exit(0);

@@ -1,0 +1,1 @@
+{ "firestore": { "rules": "open.rules" }, "emulators": { "firestore": { "port": 8091 }, "ui": { "enabled": false } } }
