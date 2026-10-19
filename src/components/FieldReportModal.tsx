@@ -67,9 +67,16 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
   const [marginPercentage, setMarginPercentage] = useState<number>(technicalParameters.defaultMarginPercentage ?? 35);
   const [marginValue, setMarginValue] = useState<number | null>(null);
   const [customSuggestedPrice, setCustomSuggestedPrice] = useState<number | null>(null);
-  const [leadTech, setLeadTech] = useState<string>(currentUser.displayName || 'Carlos Gómez');
+  const [leadTech, setLeadTech] = useState<string>(() => {
+    if (recordToEdit) return recordToEdit.leadTech ?? '';
+    if (currentUser?.role === 'Capataz' || (currentUser as any)?.category === 'Capataz') {
+      return currentUser.displayName || '';
+    }
+    return '';
+  });
   const [customTechHourlyRate, setCustomTechHourlyRate] = useState<number | null>(null);
   const [capatazCommissionPct, setCapatazCommissionPct] = useState<number>(10);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Helper quick add form state
   const [newHelperName, setNewHelperName] = useState<string>('');
@@ -124,7 +131,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       setGuardiaAmount(recordToEdit.guardiaAmount || 35000);
       setGuardiaSubtype(recordToEdit.guardiaSubtype || 'adicional');
       setMarginPercentage(recordToEdit.marginPercentage ?? (technicalParameters.defaultMarginPercentage ?? 35));
-      setLeadTech(recordToEdit.leadTech || currentUser.displayName || 'Carlos Gómez');
+      setLeadTech(recordToEdit.leadTech ?? '');
+      setFormError(null);
       setClientName(recordToEdit.clientName || 'CLIENTE GENERAL');
       setSiteLocation(recordToEdit.siteLocation || 'MENDOZA');
       setWorkPoint(recordToEdit.workPoint || '');
@@ -381,8 +389,12 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     return list.sort((a, b) => a.displayName.localeCompare(b.displayName, 'es', { sensitivity: 'base' }));
   }, [users, workers]);
 
+  // Check if job is without foreman/capataz (only crew employees)
+  const isSinCapataz = !leadTech || leadTech.trim() === '' || leadTech.toLowerCase() === 'sin capataz';
+
   // Selected lead tech user/worker profile
   const selectedLeadUser = useMemo(() => {
+    if (isSinCapataz) return undefined;
     const foundUser = users.find(u => normalizeWorkerName(u.displayName) === normalizeWorkerName(leadTech));
     if (foundUser) return foundUser;
     const foundWorker = workers.find(w => normalizeWorkerName(w.name) === normalizeWorkerName(leadTech));
@@ -399,9 +411,9 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       } as any;
     }
     return undefined;
-  }, [users, workers, leadTech]);
+  }, [users, workers, leadTech, isSinCapataz]);
 
-  const isLeadTechCapataz = selectedLeadUser?.role === 'Capataz' || leadTech.toLowerCase().includes('capataz');
+  const isLeadTechCapataz = !isSinCapataz && (selectedLeadUser?.role === 'Capataz' || leadTech.toLowerCase().includes('capataz'));
 
   // Automatically load Capataz commission % configured in personal/cuadrilla settings (for new remitos or lead changes)
   useEffect(() => {
@@ -502,16 +514,20 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
   const calculatedHours = totalRealHours > 0 ? totalRealHours : 4.0;
   const effectiveDistanceKm = !isNaN(Number(distanceKm)) ? Math.max(0, Number(distanceKm)) : 0;
 
-  const selectedLeadWorker = workers.find(w => normalizeWorkerName(w.name) === normalizeWorkerName(leadTech));
-  const defaultLeadRate = selectedLeadWorker?.hourlyRate && selectedLeadWorker.hourlyRate > 0
-    ? selectedLeadWorker.hourlyRate
-    : selectedLeadUser?.hourlyRate && selectedLeadUser.hourlyRate > 0
-      ? selectedLeadUser.hourlyRate
-      : (technicalParameters.horaOficial || technicalParameters.horaBase || 9400);
+  const selectedLeadWorker = !isSinCapataz ? workers.find(w => normalizeWorkerName(w.name) === normalizeWorkerName(leadTech)) : undefined;
+  const defaultLeadRate = isSinCapataz
+    ? 0
+    : selectedLeadWorker?.hourlyRate && selectedLeadWorker.hourlyRate > 0
+      ? selectedLeadWorker.hourlyRate
+      : selectedLeadUser?.hourlyRate && selectedLeadUser.hourlyRate > 0
+        ? selectedLeadUser.hourlyRate
+        : (technicalParameters.horaOficial || technicalParameters.horaBase || 9400);
 
-  const effectiveTechHourlyRate = customTechHourlyRate !== null
-    ? customTechHourlyRate
-    : defaultLeadRate;
+  const effectiveTechHourlyRate = isSinCapataz
+    ? 0
+    : customTechHourlyRate !== null
+      ? customTechHourlyRate
+      : defaultLeadRate;
 
   const liveCosts = calculateAuditCosts(technicalParameters, {
     hoursWorked: calculatedHours,
@@ -526,7 +542,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     marginPercentage: marginPercentage,
     helpersCount: teamMembers.length,
     materialsCost: totalMaterialsCost,
-    leadTechName: leadTech,
+    leadTechName: isSinCapataz ? '' : leadTech,
     helperNames: selectedHelpers,
     teamMembers: teamMembers,
     workers,
@@ -548,7 +564,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     : roundCurrency((liveCosts.operatingCost || 0) + effectiveMarginValue);
 
   // Capataz Profit calculated strictly on Costo de Servicio / M.O. Directa
-  const estimatedCapatazProfit = isLeadTechCapataz
+  const estimatedCapatazProfit = (isLeadTechCapataz && !isSinCapataz)
     ? roundCurrency(liveCosts.laborDirectCost * (capatazCommissionPct / 100))
     : 0;
 
@@ -654,14 +670,21 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    if (isSinCapataz && teamMembers.length === 0) {
+      setFormError('Para cargar un reporte de campo sin capataz, debe asignar al menos un empleado u operario a la cuadrilla.');
+      return;
+    }
+    setFormError(null);
+
     let signatureUrl = '';
     if (canvasRef.current && hasSignature) {
       signatureUrl = canvasRef.current.toDataURL('image/png');
     }
 
-    const effectiveCapatazCommissionPct = isLeadTechCapataz ? capatazCommissionPct : undefined;
-    const effectiveCapatazProfit = isLeadTechCapataz ? estimatedCapatazProfit : undefined;
+    const effectiveCapatazCommissionPct = (isLeadTechCapataz && !isSinCapataz) ? capatazCommissionPct : undefined;
+    const effectiveCapatazProfit = (isLeadTechCapataz && !isSinCapataz) ? estimatedCapatazProfit : undefined;
     const effectiveHonorarios = effectiveMarginValue;
+    const finalLeadTech = isSinCapataz ? '' : leadTech;
 
     if (isEditing && recordToEdit) {
       updateTechnicalAuditRecord(recordToEdit.id, {
@@ -695,8 +718,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         operatingCost: liveCosts.operatingCost,
         suggestedPrice: effectiveSuggestedPrice,
         helperPay: liveCosts.helperPay,
-        techPay: liveCosts.techPay,
-        leadTech: leadTech || 'Carlos Gómez',
+        techPay: isSinCapataz ? 0 : liveCosts.techPay,
+        leadTech: finalLeadTech,
         helpers: selectedHelpers,
         teamMembers: teamMembers,
         signatureUrl: signatureUrl || recordToEdit.signatureUrl || undefined,
@@ -737,8 +760,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         operatingCost: liveCosts.operatingCost,
         suggestedPrice: effectiveSuggestedPrice,
         helperPay: liveCosts.helperPay,
-        techPay: liveCosts.techPay,
-        leadTech: leadTech || 'Carlos Gómez',
+        techPay: isSinCapataz ? 0 : liveCosts.techPay,
+        leadTech: finalLeadTech,
         helpers: selectedHelpers,
         teamMembers: teamMembers,
         signatureUrl: signatureUrl || undefined,
@@ -1032,19 +1055,49 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
 
               {/* Responsable Técnico vinculado a Usuarios y Roles */}
               <div>
-                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 flex items-center justify-between">
-                  <span>Responsable Técnico / Capataz</span>
-                  {selectedLeadUser && (
-                    <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-cyan-100 dark:bg-cyan-900/60 text-[#00c2ff]">
-                      {selectedLeadUser.role}
-                    </span>
-                  )}
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>Responsable Técnico / Capataz</span>
+                    {isSinCapataz ? (
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-900/60 text-amber-700 dark:text-amber-300">
+                        Sin Capataz (Solo Empleados)
+                      </span>
+                    ) : selectedLeadUser ? (
+                      <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-md bg-cyan-100 dark:bg-cyan-900/60 text-[#00c2ff]">
+                        {selectedLeadUser.role}
+                      </span>
+                    ) : null}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!isSinCapataz) {
+                        setLeadTech('');
+                        setCapatazCommissionPct(0);
+                        setCustomTechHourlyRate(null);
+                      } else {
+                        setLeadTech(capatazUsers[0]?.displayName || 'Carlos Gómez');
+                      }
+                    }}
+                    className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      isSinCapataz
+                        ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40 hover:bg-amber-500/25'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:border-cyan-400'
+                    }`}
+                  >
+                    {isSinCapataz ? '✓ Modo: Sin Capataz (Solo Empleados)' : 'Cambiar a: Sin Capataz'}
+                  </button>
+                </div>
                 <select
-                  value={leadTech}
+                  value={isSinCapataz ? '' : leadTech}
                   onChange={e => {
                     const chosen = e.target.value;
                     setLeadTech(chosen);
+                    if (!chosen || chosen.toLowerCase() === 'sin capataz') {
+                      setCapatazCommissionPct(0);
+                      setCustomTechHourlyRate(null);
+                      return;
+                    }
                     const matchedCap = capatazUsers.find(c => c.displayName.toLowerCase() === chosen.toLowerCase());
                     if (matchedCap && matchedCap.capatazPercentage !== undefined) {
                       setCapatazCommissionPct(matchedCap.capatazPercentage);
@@ -1060,10 +1113,10 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
                   }}
                   className="w-full px-4 py-3 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white font-medium shadow-xs focus:ring-2 focus:ring-[#00c2ff] focus:outline-none cursor-pointer"
                 >
-                  <option value="">Seleccionar Capataz de Obra...</option>
+                  <option value="">🚫 Sin Capataz (Solo Empleados / Cuadrilla)</option>
 
                   {/* Responsable histórico si está asignado previamente */}
-                  {leadTech && !capatazUsers.some(u => u.displayName.toLowerCase() === leadTech.toLowerCase()) && (
+                  {leadTech && !isSinCapataz && !capatazUsers.some(u => u.displayName.toLowerCase() === leadTech.toLowerCase()) && (
                     <option value={leadTech}>
                       {leadTech} (Asignado en remito)
                     </option>
@@ -1085,49 +1138,67 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
                   )}
                 </select>
 
-                {/* Tarifa $/h editable del Responsable Técnico según quien se seleccione */}
-                {leadTech && (
-                  <div className="mt-2.5 flex items-center justify-between gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
-                    <div className="flex items-center gap-2">
-                      <Clock className="w-3.5 h-3.5 text-[#00c2ff] shrink-0" />
-                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
-                        Tarifa $/h del Responsable ({leadTech}):
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-cyan-400">
-                        <span className="font-mono font-bold text-slate-400 text-xs">$</span>
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={effectiveTechHourlyRate}
-                          onChange={e => {
-                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value.replace(',', '.')) || 0;
-                            setCustomTechHourlyRate(val);
-                          }}
-                          className="w-20 font-mono font-black text-xs text-slate-900 dark:text-white text-center focus:outline-none"
-                        />
-                        <span className="text-[10px] text-slate-400 font-bold">/h</span>
+                {isSinCapataz ? (
+                  <div className="mt-2.5 p-3 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-start gap-2.5">
+                      <Users className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                      <div>
+                        <div className="text-xs font-bold text-amber-800 dark:text-amber-300">
+                          Reporte de Campo sin Capataz (Solo Empleados)
+                        </div>
+                        <p className="text-[11px] text-amber-700/90 dark:text-amber-300/80 mt-0.5">
+                          El costo de mano de obra se liquida exclusivamente entre los operarios y empleados asignados a la cuadrilla (Oficiales y Ayudantes). No se aplica comisión ni liquidación de capataz.
+                        </p>
                       </div>
-                      {customTechHourlyRate !== null && (
-                        <button
-                          type="button"
-                          onClick={() => setCustomTechHourlyRate(null)}
-                          className="text-[10px] text-cyan-600 dark:text-cyan-400 hover:underline font-bold cursor-pointer"
-                          title="Restablecer a la tarifa base configurada"
-                        >
-                          ↺ Restablecer
-                        </button>
-                      )}
                     </div>
                   </div>
+                ) : (
+                  <>
+                    {/* Tarifa $/h editable del Responsable Técnico según quien se seleccione */}
+                    {leadTech && (
+                      <div className="mt-2.5 flex items-center justify-between gap-2 p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3.5 h-3.5 text-[#00c2ff] shrink-0" />
+                          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                            Tarifa $/h del Responsable ({leadTech}):
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1 bg-white dark:bg-slate-900 px-2.5 py-1 rounded-lg border border-cyan-400">
+                            <span className="font-mono font-bold text-slate-400 text-xs">$</span>
+                            <input
+                              type="number"
+                              step="any"
+                              min="0"
+                              value={effectiveTechHourlyRate}
+                              onChange={e => {
+                                const val = e.target.value === '' ? 0 : parseFloat(e.target.value.replace(',', '.')) || 0;
+                                setCustomTechHourlyRate(val);
+                              }}
+                              className="w-20 font-mono font-black text-xs text-slate-900 dark:text-white text-center focus:outline-none"
+                            />
+                            <span className="text-[10px] text-slate-400 font-bold">/h</span>
+                          </div>
+                          {customTechHourlyRate !== null && (
+                            <button
+                              type="button"
+                              onClick={() => setCustomTechHourlyRate(null)}
+                              className="text-[10px] text-cyan-600 dark:text-cyan-400 hover:underline font-bold cursor-pointer"
+                              title="Restablecer a la tarifa base configurada"
+                            >
+                              ↺ Restablecer
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
 
             {/* Ficha Dinámica si el Responsable es Capataz */}
-            {isLeadTechCapataz && (
+            {!isSinCapataz && isLeadTechCapataz && (
               <div className="mt-3 p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 space-y-2.5 animate-in fade-in slide-in-from-top-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -1161,7 +1232,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
                     <div className="text-right">
                       <div className="text-[9px] text-slate-500 dark:text-slate-400 font-bold uppercase">Ganancia Capataz:</div>
                       <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">
-                        ${estimatedCapatazProfit.toLocaleString('es-AR')}
+                        +${estimatedCapatazProfit.toLocaleString('es-AR')}
                       </div>
                     </div>
                   </div>
@@ -1525,8 +1596,14 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
               })}
 
               {teamMembers.length === 0 && (
-                <div className="p-3.5 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-xs text-slate-500">
-                  Sin operarios adicionales asignados. (Solo el responsable técnico).
+                <div className={`p-4 rounded-2xl border text-center text-xs font-medium ${
+                  isSinCapataz
+                    ? 'border-amber-400/60 bg-amber-500/10 text-amber-800 dark:text-amber-200'
+                    : 'border-dashed border-slate-300 dark:border-slate-700 text-slate-500'
+                }`}>
+                  {isSinCapataz
+                    ? '⚠️ Modo sin Capataz: Debe agregar al menos un operario o empleado a la cuadrilla (Oficial o Ayudante) para calcular el reporte de campo.'
+                    : 'Sin operarios adicionales asignados. (Solo el responsable técnico).'}
                 </div>
               )}
             </div>
@@ -1538,7 +1615,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
               </span>
               <div className="flex flex-wrap gap-2">
                 {dynamicAvailableHelpers
-                  .filter(h => h.name.toLowerCase() !== leadTech.toLowerCase() && !teamMembers.some(m => m.name.toLowerCase() === h.name.toLowerCase()))
+                  .filter(h => (isSinCapataz || h.name.toLowerCase() !== leadTech.toLowerCase()) && !teamMembers.some(m => m.name.toLowerCase() === h.name.toLowerCase()))
                   .map(helper => (
                     <button
                       key={helper.name}
@@ -2002,6 +2079,14 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
               </div>
             </div>
           </div>
+
+          {/* Error notice if validation fails */}
+          {formError && (
+            <div className="p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/40 text-rose-600 dark:text-rose-400 text-xs font-bold flex items-center gap-2 mb-2 animate-in fade-in">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{formError}</span>
+            </div>
+          )}
 
           {/* FINAL ACTION BUTTON (Image 4) */}
           <div className="pt-2">

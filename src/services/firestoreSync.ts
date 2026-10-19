@@ -566,7 +566,7 @@ export function normalizeTechnicalAuditRecord(raw: any): TechnicalAuditRecord {
     helperPay,
     techPay,
     honorarios,
-    leadTech: String(raw.leadTech || raw.responsableTecnico || 'Ing. Matías Calderón'),
+    leadTech: raw.leadTech !== undefined ? String(raw.leadTech) : (raw.responsableTecnico ? String(raw.responsableTecnico) : ''),
     helpers: Array.isArray(raw.helpers) ? raw.helpers : (raw.capataz ? [raw.capataz] : ['MARCELO QUINTEROS']),
     teamMembers: Array.isArray(raw.teamMembers) ? raw.teamMembers : undefined,
     supportStaff: Array.isArray(raw.supportStaff) ? raw.supportStaff : [],

@@ -130,6 +130,7 @@ export const LiquidationEmployeesView: React.FC = () => {
       ).filter(name => {
         if (!name) return false;
         const cleanName = name.toLowerCase().trim();
+        if (cleanName === 'sin capataz' || cleanName === 'ninguno' || cleanName === 'sin asignar') return false;
         return !deletedNames.has(cleanName);
       });
     }

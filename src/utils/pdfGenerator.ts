@@ -115,7 +115,7 @@ export const generateRemitoPasadoPDF = (record: TechnicalAuditRecord): void => {
   doc.text('RESPONSABLE TÉCNICO:', 115, currentY + 29);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(51, 65, 85);
-  doc.text(record.leadTech || 'JOB Bandiera', 152, currentY + 29);
+  doc.text(record.leadTech || 'Sin Capataz (Cuadrilla)', 152, currentY + 29);
 
   // Main Breakdown Table
   currentY = 76;
@@ -227,13 +227,13 @@ export const generateRemitoPasadoPDF = (record: TechnicalAuditRecord): void => {
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text(record.leadTech || 'Ing. Matías Calderón', 54, currentY + 5, { align: 'center' });
+  doc.text(record.leadTech || 'Cuadrilla de Operarios', 54, currentY + 5, { align: 'center' });
   doc.text(record.clientName || 'Cliente', 156, currentY + 5, { align: 'center' });
 
   doc.setFontSize(7.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(100, 116, 139);
-  doc.text('Responsable Técnico - JOB Bandiera', 54, currentY + 10, { align: 'center' });
+  doc.text(record.leadTech ? 'Responsable Técnico - JOB Bandiera' : 'Cuadrilla de Campo - JOB Bandiera', 54, currentY + 10, { align: 'center' });
   doc.text('Conformidad y Recepción de Trabajos', 156, currentY + 10, { align: 'center' });
 
   // Footer note

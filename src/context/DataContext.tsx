@@ -831,23 +831,28 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     // Capataz commission calculation strictly on Costo de Servicio / M.O. Directa
-    const matchedWorker = recordInput.leadTech ? workers.find(w => w.name.toLowerCase() === recordInput.leadTech.toLowerCase()) : undefined;
-    const matchedUser = recordInput.leadTech ? users.find(u => u.displayName.toLowerCase() === recordInput.leadTech.toLowerCase()) : undefined;
+    const hasNoCap = !recordInput.leadTech || recordInput.leadTech.trim() === '' || recordInput.leadTech.toLowerCase() === 'sin capataz';
+    const matchedWorker = (!hasNoCap && recordInput.leadTech) ? workers.find(w => w.name.toLowerCase() === recordInput.leadTech.toLowerCase()) : undefined;
+    const matchedUser = (!hasNoCap && recordInput.leadTech) ? users.find(u => u.displayName.toLowerCase() === recordInput.leadTech.toLowerCase()) : undefined;
 
-    const isCapatazLead = Boolean(recordInput.leadTech && (
+    const isCapatazLead = !hasNoCap && Boolean(
       recordInput.leadTech.toLowerCase().includes('capataz') ||
       matchedWorker?.role === 'Capataz' ||
       matchedUser?.role === 'Capataz'
-    ));
+    );
 
     const configuredCapatazPct = matchedWorker?.capatazPercentage ?? matchedUser?.capatazPercentage ?? 10;
 
-    const capatazCommissionPct = recordInput.capatazCommissionPct !== undefined
-      ? recordInput.capatazCommissionPct
-      : (isCapatazLead ? configuredCapatazPct : undefined);
-    const capatazProfit = recordInput.capatazProfit !== undefined
-      ? recordInput.capatazProfit
-      : (capatazCommissionPct !== undefined ? calculateCapatazProfit(costs.laborDirectCost, capatazCommissionPct) : undefined);
+    const capatazCommissionPct = hasNoCap
+      ? undefined
+      : (recordInput.capatazCommissionPct !== undefined
+          ? recordInput.capatazCommissionPct
+          : (isCapatazLead ? configuredCapatazPct : undefined));
+    const capatazProfit = hasNoCap
+      ? undefined
+      : (recordInput.capatazProfit !== undefined
+          ? recordInput.capatazProfit
+          : (capatazCommissionPct !== undefined ? calculateCapatazProfit(costs.laborDirectCost, capatazCommissionPct) : undefined));
 
     const newRecord: TechnicalAuditRecord = {
       ...recordInput,
@@ -992,8 +997,20 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
 
           // Compute Capataz profit strictly on COSTO DE SERVICIO (laborDirectCost)
-          const commissionPct = updated.capatazCommissionPct !== undefined ? updated.capatazCommissionPct : (item.capatazCommissionPct || 10);
-          updated.capatazProfit = calculateCapatazProfit(updated.laborDirectCost, commissionPct);
+          const hasNoCapLead = !updated.leadTech || updated.leadTech.trim() === '' || updated.leadTech.toLowerCase() === 'sin capataz';
+          const isCapLead = !hasNoCapLead && Boolean(
+            updated.leadTech.toLowerCase().includes('capataz') ||
+            workers.some(w => w.name.toLowerCase() === updated.leadTech.toLowerCase() && (w.role === 'Capataz' || w.category === 'Capataz')) ||
+            users.some(u => u.displayName.toLowerCase() === updated.leadTech.toLowerCase() && (u.role === 'Capataz' || (u as any).category === 'Capataz'))
+          );
+
+          if (hasNoCapLead || !isCapLead) {
+            updated.capatazCommissionPct = undefined;
+            updated.capatazProfit = undefined;
+          } else {
+            const commissionPct = updated.capatazCommissionPct !== undefined ? updated.capatazCommissionPct : (item.capatazCommissionPct || 10);
+            updated.capatazProfit = calculateCapatazProfit(updated.laborDirectCost, commissionPct);
+          }
 
           return updated;
         }
