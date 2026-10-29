@@ -110,7 +110,21 @@ Hosting publica archivos en internet: cualquiera con la dirección podría bajar
 - Usa el Admin SDK, que no depende de las reglas de seguridad. Sigue funcionando después de publicar las reglas nuevas. **El comando manual `npm run resguardo:exportar` no:** usa el SDK de cliente sin sesión y dejará de leer cuando se cierren las reglas. Después de ese paso, use la copia automática y `descargar`.
 - El formato es el mismo que el de la copia manual. Una copia descargada se verifica, compara y restaura con `scripts/resguardo.mjs`.
 
-### Instalación (la ejecuta el dueño del proyecto)
+### Instalación rápida (un solo comando)
+
+La carpeta `resguardo-nube` incluye `instalar.sh`, que hace todos los pasos de abajo, pide confirmación escribiendo SI antes de cambiar algo y se puede repetir sin problema. La ejecuta el dueño del proyecto, que es quien puede iniciar sesión con permisos de Owner:
+
+1. Entre a la consola de Google Cloud, elija el proyecto y abra Cloud Shell (ícono `>_`).
+2. Suba `resguardo-nube.tar.gz` (menú de tres puntos, Subir; el archivo se genera con `tar -czf resguardo-nube.tar.gz resguardo-nube` en la carpeta del proyecto).
+3. Ejecute:
+
+```bash
+tar xzf resguardo-nube.tar.gz && bash resguardo-nube/instalar.sh
+```
+
+Al final corre una primera copia de prueba y lista lo que quedó en el depósito. Si la construcción del trabajo falla por permisos de Cloud Build, el mensaje del error indica el rol que falta; es un ajuste de una sola vez.
+
+### Instalación paso a paso (equivale al comando anterior)
 
 Nada de esto está instalado: es un cambio en el proyecto de producción. Se hace una vez, desde Cloud Shell (consola de Google Cloud, ícono `>_`) o con `gcloud` instalado, con la cuenta Owner. Reemplace los valores si cambian.
 
