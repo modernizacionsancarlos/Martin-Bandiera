@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserRole, RolePermissions } from '../types';
-import { INITIAL_USERS } from '../data/initialData';
+import { INITIAL_USERS, ADMIN_PERMISSIONS, SUPERADMIN_PERMISSIONS } from '../data/initialData';
 import { getEffectivePermissions, DEFAULT_ROLE_PERMISSIONS } from '../utils/permissionUtils';
 import { isAuthorizedWorkerOrStaff, normalizeWorkerName } from '../utils/calculationUtils';
 import {
@@ -296,7 +296,8 @@ function loadAllPersistedUsers(): UserProfile[] {
     }
   });
 
-  // Guarantee admin@admin.com is available as Juan Pablo (SuperAdmin)
+  // Guarantee canonical admin users are present and correctly configured
+  // 1. Juan Pablo (SuperAdmin)
   if (!deletedEmails.has('admin@admin.com') && !deletedUids.has('usr_super_01')) {
     const existingAdmin = map.get('usr_super_01') || map.get('admin@admin.com');
     map.set('usr_super_01', {
@@ -313,8 +314,113 @@ function loadAllPersistedUsers(): UserProfile[] {
       phone: '+54 9 2622 50-5195',
       specialty: 'Dirección General & Consultoría de Obras',
       cuadrilla: 'Dirección Ejecutiva',
-      active: true
+      active: true,
+      customPermissions: { ...SUPERADMIN_PERMISSIONS }
     });
+  }
+
+  // 2. Martin Bandiera (SuperAdmin)
+  if (!deletedEmails.has('martin@iipsa.com.ar') && !deletedUids.has('usr_super_alias')) {
+    const existingMartin = map.get('usr_super_alias') || map.get('martin@iipsa.com.ar');
+    map.set('usr_super_alias', {
+      ...(existingMartin || {}),
+      uid: 'usr_super_alias',
+      email: 'martin@iipsa.com.ar',
+      displayName: 'Martin Bandiera',
+      role: 'SuperAdmin',
+      category: 'Administrativo',
+      isAdministrative: true,
+      password: existingMartin?.password || '123456',
+      tenantId: existingMartin?.tenantId || 'tenant_bandiera_hq',
+      companyName: 'JOB Martin Bandiera S.A.',
+      phone: '+54 9 2622 50-5195',
+      specialty: 'Dirección General & Consultoría de Obras',
+      cuadrilla: 'Dirección Ejecutiva',
+      active: true,
+      customPermissions: { ...SUPERADMIN_PERMISSIONS }
+    });
+  }
+
+  // 3. Gastón Villalobos (Admin)
+  if (!deletedEmails.has('gastonvillalobos2019@gmail.com') && !deletedUids.has('usr_adm_gaston')) {
+    const existingGaston = map.get('usr_adm_gaston') || map.get('gastonvillalobos2019@gmail.com');
+    map.set('usr_adm_gaston', {
+      ...(existingGaston || {}),
+      uid: 'usr_adm_gaston',
+      email: 'gastonvillalobos2019@gmail.com',
+      displayName: 'Gastón Villalobos (Administración)',
+      role: 'Admin',
+      category: 'Administrativo',
+      isAdministrative: true,
+      password: existingGaston?.password || '123456',
+      tenantId: existingGaston?.tenantId || 'tenant_bandiera_hq',
+      companyName: 'JOB Martin Bandiera S.A.',
+      phone: '+54 9 261 330-1127',
+      specialty: 'Logística, Operaciones y Flota',
+      cuadrilla: 'Administración Central',
+      active: true,
+      customPermissions: {
+        ...ADMIN_PERMISSIONS,
+        manageFixedCosts: true,
+        manageBilling: true,
+        manageUsers: true,
+        manageAudits: true,
+        manageCollections: true,
+        manageLiquidations: true,
+        manageClients: true,
+        manageProjects: true,
+        manageMaterials: true,
+        manageVehicles: true,
+        createRemito: true,
+        exportExcel: true,
+        viewDashboard: true
+      }
+    });
+  }
+
+  // 4. Romina (Admin)
+  if (!deletedEmails.has('rominabromeo@yahoo.com.ar') && !deletedUids.has('usr_adm_romina')) {
+    const existingRomina = map.get('usr_adm_romina') || map.get('rominabromeo@yahoo.com.ar');
+    map.set('usr_adm_romina', {
+      ...(existingRomina || {}),
+      uid: 'usr_adm_romina',
+      email: 'rominabromeo@yahoo.com.ar',
+      displayName: 'Romina (Administración)',
+      role: 'Admin',
+      category: 'Administrativo',
+      isAdministrative: true,
+      password: existingRomina?.password || '123456',
+      tenantId: existingRomina?.tenantId || 'tenant_bandiera_hq',
+      companyName: 'JOB Martin Bandiera S.A.',
+      phone: '+54 9 261 411-2288',
+      specialty: 'Facturación, Remitos y Cobranzas',
+      cuadrilla: 'Administración Central',
+      active: true,
+      customPermissions: {
+        ...ADMIN_PERMISSIONS,
+        manageFixedCosts: true,
+        manageBilling: true,
+        manageUsers: true,
+        manageAudits: true,
+        manageCollections: true,
+        manageLiquidations: true,
+        manageClients: true,
+        manageProjects: true,
+        manageMaterials: true,
+        manageVehicles: true,
+        createRemito: true,
+        exportExcel: true,
+        viewDashboard: true
+      }
+    });
+  }
+
+  // Ensure WRK-14 worker does not conflict with Gastón's admin profile
+  if (map.has('WRK-14')) {
+    const wrk14 = map.get('WRK-14')!;
+    if (wrk14.email === 'gastonvillalobos2019@gmail.com') {
+      wrk14.email = 'cgv@bandiera.com';
+    }
   }
 
   const list = Array.from(map.values());
@@ -339,15 +445,98 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem(AUTH_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.uid) {
-          if ((parsed.email || '').toLowerCase().trim() === 'admin@admin.com') {
+        if (parsed && (parsed.uid || parsed.email)) {
+          const email = (parsed.email || '').toLowerCase().trim();
+          if (email === 'admin@admin.com' || parsed.uid === 'usr_super_01') {
             return {
               ...parsed,
+              uid: 'usr_super_01',
+              email: 'admin@admin.com',
               displayName: 'Juan Pablo',
               role: 'SuperAdmin',
               isAdministrative: true,
               category: 'Administrativo',
-              password: 'admin'
+              password: 'admin',
+              active: true
+            };
+          }
+          if (email === 'martin@iipsa.com.ar' || email === 'admin@bandiera.com' || parsed.uid === 'usr_super_alias') {
+            return {
+              ...parsed,
+              uid: 'usr_super_alias',
+              email: 'martin@iipsa.com.ar',
+              displayName: 'Martin Bandiera',
+              role: 'SuperAdmin',
+              isAdministrative: true,
+              category: 'Administrativo',
+              active: true
+            };
+          }
+          // Self-heal Gastón Villalobos if stored as Admin or if mistakenly cached with CGV / WRK-14
+          if (
+            email === 'gastonvillalobos2019@gmail.com' ||
+            parsed.uid === 'usr_adm_gaston' ||
+            parsed.uid === 'WRK-14' ||
+            parsed.displayName === 'CGV' ||
+            email === 'cgv@bandiera.com'
+          ) {
+            return {
+              ...parsed,
+              uid: 'usr_adm_gaston',
+              email: 'gastonvillalobos2019@gmail.com',
+              displayName: 'Gastón Villalobos (Administración)',
+              role: 'Admin',
+              isAdministrative: true,
+              category: 'Administrativo',
+              specialty: 'Logística, Operaciones y Flota',
+              cuadrilla: 'Administración Central',
+              active: true,
+              password: parsed.password || '123456',
+              customPermissions: {
+                ...ADMIN_PERMISSIONS,
+                manageFixedCosts: true,
+                manageBilling: true,
+                manageUsers: true,
+                manageAudits: true,
+                manageCollections: true,
+                manageLiquidations: true,
+                manageClients: true,
+                manageProjects: true,
+                manageMaterials: true,
+                manageVehicles: true,
+                createRemito: true,
+                exportExcel: true,
+                viewDashboard: true
+              }
+            };
+          }
+          if (email === 'rominabromeo@yahoo.com.ar' || parsed.uid === 'usr_adm_romina') {
+            return {
+              ...parsed,
+              uid: 'usr_adm_romina',
+              email: 'rominabromeo@yahoo.com.ar',
+              displayName: 'Romina (Administración)',
+              role: 'Admin',
+              isAdministrative: true,
+              category: 'Administrativo',
+              active: true,
+              password: parsed.password || '123456',
+              customPermissions: {
+                ...ADMIN_PERMISSIONS,
+                manageFixedCosts: true,
+                manageBilling: true,
+                manageUsers: true,
+                manageAudits: true,
+                manageCollections: true,
+                manageLiquidations: true,
+                manageClients: true,
+                manageProjects: true,
+                manageMaterials: true,
+                manageVehicles: true,
+                createRemito: true,
+                exportExcel: true,
+                viewDashboard: true
+              }
             };
           }
           if (parsed.role === 'SuperAdmin') {
@@ -465,7 +654,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
       }
 
-      // Always guarantee root SuperAdmin Juan Pablo is present
+      // Always guarantee canonical admins are present with full configuration
+      // 1. Juan Pablo (SuperAdmin)
       const adminSuper = validUsersMap.get('usr_super_01') || INITIAL_USERS[0];
       validUsersMap.set('usr_super_01', {
         ...adminSuper,
@@ -481,8 +671,97 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         phone: '+54 9 2622 50-5195',
         specialty: 'Dirección General & Consultoría de Obras',
         cuadrilla: 'Dirección Ejecutiva',
-        active: true
+        active: true,
+        customPermissions: { ...SUPERADMIN_PERMISSIONS }
       });
+
+      // 2. Martin Bandiera (SuperAdmin)
+      const martinUser = validUsersMap.get('usr_super_alias') ||
+                         Array.from(validUsersMap.values()).find(u => (u.email || '').toLowerCase().trim() === 'martin@iipsa.com.ar') ||
+                         INITIAL_USERS.find(u => u.uid === 'usr_super_alias')!;
+      if (martinUser) {
+        validUsersMap.set('usr_super_alias', {
+          ...martinUser,
+          uid: 'usr_super_alias',
+          email: 'martin@iipsa.com.ar',
+          displayName: 'Martin Bandiera',
+          role: 'SuperAdmin',
+          category: 'Administrativo',
+          isAdministrative: true,
+          active: true,
+          customPermissions: { ...SUPERADMIN_PERMISSIONS }
+        });
+      }
+
+      // 3. Gastón Villalobos (Admin)
+      const gastonUser = validUsersMap.get('usr_adm_gaston') ||
+                         Array.from(validUsersMap.values()).find(u => (u.email || '').toLowerCase().trim() === 'gastonvillalobos2019@gmail.com') ||
+                         INITIAL_USERS.find(u => u.uid === 'usr_adm_gaston')!;
+      if (gastonUser) {
+        validUsersMap.set('usr_adm_gaston', {
+          ...gastonUser,
+          uid: 'usr_adm_gaston',
+          email: 'gastonvillalobos2019@gmail.com',
+          displayName: 'Gastón Villalobos (Administración)',
+          role: 'Admin',
+          category: 'Administrativo',
+          isAdministrative: true,
+          specialty: 'Logística, Operaciones y Flota',
+          cuadrilla: 'Administración Central',
+          active: true,
+          password: gastonUser.password || '123456',
+          customPermissions: {
+            ...ADMIN_PERMISSIONS,
+            manageFixedCosts: true,
+            manageBilling: true,
+            manageUsers: true,
+            manageAudits: true,
+            manageCollections: true,
+            manageLiquidations: true,
+            manageClients: true,
+            manageProjects: true,
+            manageMaterials: true,
+            manageVehicles: true,
+            createRemito: true,
+            exportExcel: true,
+            viewDashboard: true
+          }
+        });
+      }
+
+      // 4. Romina (Admin)
+      const rominaUser = validUsersMap.get('usr_adm_romina') ||
+                         Array.from(validUsersMap.values()).find(u => (u.email || '').toLowerCase().trim() === 'rominabromeo@yahoo.com.ar') ||
+                         INITIAL_USERS.find(u => u.uid === 'usr_adm_romina')!;
+      if (rominaUser) {
+        validUsersMap.set('usr_adm_romina', {
+          ...rominaUser,
+          uid: 'usr_adm_romina',
+          email: 'rominabromeo@yahoo.com.ar',
+          displayName: 'Romina (Administración)',
+          role: 'Admin',
+          category: 'Administrativo',
+          isAdministrative: true,
+          active: true,
+          password: rominaUser.password || '123456',
+          customPermissions: {
+            ...ADMIN_PERMISSIONS,
+            manageFixedCosts: true,
+            manageBilling: true,
+            manageUsers: true,
+            manageAudits: true,
+            manageCollections: true,
+            manageLiquidations: true,
+            manageClients: true,
+            manageProjects: true,
+            manageMaterials: true,
+            manageVehicles: true,
+            createRemito: true,
+            exportExcel: true,
+            viewDashboard: true
+          }
+        });
+      }
 
       const validUsers = Array.from(validUsersMap.values());
 
@@ -491,13 +770,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(validUsers));
       } catch {}
 
-      // Update active session user if matched
+      // Update active session user if matched & self-heal Gastón/Admin accounts
       setCurrentUser(prev => {
         if (!prev) return INITIAL_USERS[0];
         const prevEmail = (prev.email || '').toLowerCase().trim();
         if (deletedUids.has(prev.uid) || (prevEmail && deletedEmails.has(prevEmail))) {
           return INITIAL_USERS[0];
         }
+
+        // If session was Gastón (or mistakenly logged in as CGV / WRK-14), heal to Admin Gastón
+        if (
+          prevEmail === 'gastonvillalobos2019@gmail.com' ||
+          prev.uid === 'usr_adm_gaston' ||
+          prev.uid === 'WRK-14' ||
+          prev.displayName === 'CGV' ||
+          prevEmail === 'cgv@bandiera.com'
+        ) {
+          const gaston = validUsers.find(
+            u => u.uid === 'usr_adm_gaston' || (u.email && u.email.toLowerCase().trim() === 'gastonvillalobos2019@gmail.com')
+          );
+          if (gaston) {
+            try {
+              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(gaston));
+            } catch {}
+            return gaston;
+          }
+        }
+
+        // If session was Martin Bandiera
+        if (
+          prevEmail === 'martin@iipsa.com.ar' ||
+          prev.uid === 'usr_super_alias' ||
+          prevEmail === 'admin@bandiera.com'
+        ) {
+          const martin = validUsers.find(
+            u => u.uid === 'usr_super_alias' || (u.email && u.email.toLowerCase().trim() === 'martin@iipsa.com.ar')
+          );
+          if (martin) {
+            try {
+              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(martin));
+            } catch {}
+            return martin;
+          }
+        }
+
         const matched = validUsers.find(
           u => u.uid === prev.uid || (u.email && u.email.toLowerCase() === prevEmail)
         );
@@ -575,42 +891,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Handle known user aliases so users can log in with their personal or company email
     const aliasMap: Record<string, string[]> = {
-      'gastonvillalobos2019@gmail.com': ['gaston@bandiera.com', 'cgv@bandiera.com', 'gaston', 'gaston villalobos'],
-      'gaston@bandiera.com': ['gastonvillalobos2019@gmail.com', 'cgv@bandiera.com', 'gaston'],
-      'rominabromeo@yahoo.com.ar': ['romina@bandiera.com', 'romina'],
-      'romina@bandiera.com': ['rominabromeo@yahoo.com.ar', 'romina'],
-      'martin@iipsa.com.ar': ['admin@bandiera.com', 'mbb@bandiera.com', 'martin bandiera', 'martin'],
-      'admin@bandiera.com': ['martin@iipsa.com.ar', 'mbb@bandiera.com', 'martin bandiera', 'martin'],
+      'gastonvillalobos2019@gmail.com': ['gaston@bandiera.com', 'gaston villalobos', 'gaston'],
+      'gaston@bandiera.com': ['gastonvillalobos2019@gmail.com', 'gaston villalobos', 'gaston'],
+      'rominabromeo@yahoo.com.ar': ['romina@bandiera.com', 'romina bromeo', 'romina'],
+      'romina@bandiera.com': ['rominabromeo@yahoo.com.ar', 'romina bromeo', 'romina'],
+      'martin@iipsa.com.ar': ['admin@bandiera.com', 'martin bandiera', 'martin'],
+      'admin@bandiera.com': ['martin@iipsa.com.ar', 'martin bandiera', 'martin'],
       'admin@admin.com': ['juan pablo', 'superadmin', 'admin']
     };
-    const searchKeys = [cleanId, ...(aliasMap[cleanId] || [])];
 
-    // Search across real-time Firestore loaded users first, then fallback to persisted
+    // Search pool: live users first, then fallback to persisted
     const searchPool = users.length > 0 ? users : loadAllPersistedUsers();
+    const { uids: deletedUids, emails: deletedEmails } = getDeletedUsersTombstone();
 
-    // Match by exact email, email prefix (before @), display name, or normalized name
-    let found = searchPool.find(u => {
-      const uEmail = (u.email || '').toLowerCase().trim();
-      const uName = (u.displayName || '').toLowerCase().trim();
-      const emailPrefix = uEmail.split('@')[0];
-      const nameNoSpace = uName.replace(/\s+/g, '');
+    // Priority 1: Exact email match on typed cleanId
+    let found = searchPool.find(u => (u.email || '').toLowerCase().trim() === cleanId) ||
+                INITIAL_USERS.find(u => {
+                  const em = (u.email || '').toLowerCase().trim();
+                  return em === cleanId && !deletedUids.has(u.uid) && !deletedEmails.has(em);
+                });
 
-      return searchKeys.some(key => {
-        const keyNoSpace = key.replace(/\s+/g, '');
-        return (
-          uEmail === key ||
-          emailPrefix === key ||
-          uName === key ||
-          nameNoSpace === keyNoSpace ||
-          uName.includes(key)
-        );
-      });
-    });
-
-    // Fallback across all INITIAL_USERS if not in current list, ONLY IF NOT DELETED
+    // Priority 2: Exact UID match
     if (!found) {
-      const { uids: deletedUids, emails: deletedEmails } = getDeletedUsersTombstone();
-      found = INITIAL_USERS.find(u => {
+      found = searchPool.find(u => (u.uid || '').toLowerCase().trim() === cleanId) ||
+              INITIAL_USERS.find(u => {
+                const em = (u.email || '').toLowerCase().trim();
+                return (u.uid || '').toLowerCase().trim() === cleanId && !deletedUids.has(u.uid) && !deletedEmails.has(em);
+              });
+    }
+
+    // Priority 3: Exact email match against known aliases
+    if (!found && aliasMap[cleanId]) {
+      for (const alias of aliasMap[cleanId]) {
+        const aliasMatch = searchPool.find(u => (u.email || '').toLowerCase().trim() === alias) ||
+                           INITIAL_USERS.find(u => {
+                             const em = (u.email || '').toLowerCase().trim();
+                             return em === alias && !deletedUids.has(u.uid) && !deletedEmails.has(em);
+                           });
+        if (aliasMatch) {
+          found = aliasMatch;
+          break;
+        }
+      }
+    }
+
+    // Priority 4: Exact displayName or normalized worker name match
+    if (!found) {
+      const cleanNormId = normalizeWorkerName(cleanId);
+      found = searchPool.find(u => {
+        const uName = (u.displayName || '').toLowerCase().trim();
+        return uName === cleanId || (cleanNormId && normalizeWorkerName(uName) === cleanNormId);
+      }) || INITIAL_USERS.find(u => {
+        const uName = (u.displayName || '').toLowerCase().trim();
+        const em = (u.email || '').toLowerCase().trim();
+        return (uName === cleanId || (cleanNormId && normalizeWorkerName(uName) === cleanNormId)) &&
+               !deletedUids.has(u.uid) && !deletedEmails.has(em);
+      });
+    }
+
+    // Priority 5: Fallback search across searchKeys
+    if (!found) {
+      const searchKeys = [cleanId, ...(aliasMap[cleanId] || [])];
+      found = searchPool.find(u => {
+        const uEmail = (u.email || '').toLowerCase().trim();
+        const uName = (u.displayName || '').toLowerCase().trim();
+        const emailPrefix = uEmail.split('@')[0];
+        const nameNoSpace = uName.replace(/\s+/g, '');
+
+        return searchKeys.some(key => {
+          const keyNoSpace = key.replace(/\s+/g, '');
+          return (
+            uEmail === key ||
+            emailPrefix === key ||
+            uName === key ||
+            nameNoSpace === keyNoSpace ||
+            uName.includes(key)
+          );
+        });
+      }) || INITIAL_USERS.find(u => {
         const uEmail = (u.email || '').toLowerCase().trim();
         if (deletedUids.has(u.uid) || deletedEmails.has(uEmail)) return false;
 
@@ -629,10 +987,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           );
         });
       });
-      if (found) {
-        saveUserToFirestore(found).catch(() => {});
-        setUsers(prev => [found!, ...prev.filter(u => u.email.toLowerCase() !== found!.email.toLowerCase())]);
-      }
+    }
+
+    // Normalize Gastón Villalobos profile to Admin with full permissions
+    if (
+      found &&
+      (found.uid === 'usr_adm_gaston' ||
+       (found.email || '').toLowerCase().trim() === 'gastonvillalobos2019@gmail.com' ||
+       cleanId === 'gastonvillalobos2019@gmail.com')
+    ) {
+      found = {
+        ...found,
+        uid: 'usr_adm_gaston',
+        email: 'gastonvillalobos2019@gmail.com',
+        displayName: 'Gastón Villalobos (Administración)',
+        role: 'Admin',
+        isAdministrative: true,
+        category: 'Administrativo',
+        specialty: 'Logística, Operaciones y Flota',
+        cuadrilla: 'Administración Central',
+        active: true,
+        password: found.password || '123456',
+        customPermissions: {
+          ...ADMIN_PERMISSIONS,
+          manageFixedCosts: true,
+          manageBilling: true,
+          manageUsers: true,
+          manageAudits: true,
+          manageCollections: true,
+          manageLiquidations: true,
+          manageClients: true,
+          manageProjects: true,
+          manageMaterials: true,
+          manageVehicles: true,
+          createRemito: true,
+          exportExcel: true,
+          viewDashboard: true
+        }
+      };
+      saveUserToFirestore(found).catch(() => {});
+    }
+
+    if (found) {
+      saveUserToFirestore(found).catch(() => {});
+      setUsers(prev => [found!, ...prev.filter(u => u.email.toLowerCase() !== found!.email.toLowerCase())]);
     }
 
     if (!found) {

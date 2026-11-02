@@ -63,7 +63,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     manageProjects: true,
     manageMaterials: true,
     manageVehicles: true,
-    manageFixedCosts: false,
+    manageFixedCosts: true, // Panel de Configuración y Costos Fijos
     manageUsers: true,
     resetSystem: false,
     exportExcel: true,
@@ -225,13 +225,42 @@ export function getEffectivePermissions(user?: UserProfile | null): RolePermissi
   if (!user) {
     return { ...EMPTY_PERMISSIONS };
   }
+  const cleanEmail = (user.email || '').toLowerCase().trim();
+
   // SuperAdmin ALWAYS has 100% of all permissions unconditionally.
   // No customPermissions or role downgrade can ever remove SuperAdmin capabilities.
   if (
     user.role === 'SuperAdmin' ||
-    (user.email && ['admin@admin.com', 'admin@bandiera.com', 'valenkoreinmolina@gmail.com'].includes(user.email.toLowerCase().trim()))
+    ['admin@admin.com', 'admin@bandiera.com', 'valenkoreinmolina@gmail.com', 'martin@iipsa.com.ar'].includes(cleanEmail)
   ) {
     return { ...DEFAULT_ROLE_PERMISSIONS.SuperAdmin };
+  }
+
+  // Admin users (Gastón Villalobos, Romina, etc.) ALWAYS have full operational admin permissions including fixed costs
+  if (
+    user.role === 'Admin' ||
+    ['gastonvillalobos2019@gmail.com', 'rominabromeo@yahoo.com.ar'].includes(cleanEmail)
+  ) {
+    const adminBase: RolePermissions = {
+      ...DEFAULT_ROLE_PERMISSIONS.Admin,
+      manageFixedCosts: true,
+      manageBilling: true,
+      manageUsers: true,
+      manageAudits: true,
+      manageCollections: true,
+      manageLiquidations: true,
+      manageClients: true,
+      manageProjects: true,
+      manageMaterials: true,
+      manageVehicles: true,
+      createRemito: true,
+      exportExcel: true,
+      viewDashboard: true
+    };
+    return {
+      ...adminBase,
+      ...(user.customPermissions || {})
+    };
   }
 
   const basePermissions = DEFAULT_ROLE_PERMISSIONS[user.role] || DEFAULT_ROLE_PERMISSIONS.Empleado;
@@ -246,11 +275,13 @@ export function getEffectivePermissions(user?: UserProfile | null): RolePermissi
 
 export function isAdministrativeUser(user?: UserProfile | null): boolean {
   if (!user) return false;
+  const cleanEmail = (user.email || '').toLowerCase().trim();
   if (['SuperAdmin', 'Owner', 'Gerente', 'Admin', 'Directivo'].includes(user.role)) return true;
   if (user.isAdministrative) return true;
   if (user.category === 'Administrativo') return true;
+  if (['gastonvillalobos2019@gmail.com', 'rominabromeo@yahoo.com.ar', 'martin@iipsa.com.ar', 'admin@admin.com'].includes(cleanEmail)) return true;
   const permissions = getEffectivePermissions(user);
-  if (permissions.manageUsers || permissions.manageLiquidations) return true;
+  if (permissions.manageUsers || permissions.manageLiquidations || permissions.manageFixedCosts) return true;
   return false;
 }
 

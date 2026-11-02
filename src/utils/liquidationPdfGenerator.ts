@@ -284,22 +284,7 @@ const renderIndividualWorkerReceipt = (
 
   currentY += 14;
 
-  // Signatures Area
-  doc.setDrawColor(148, 163, 184); // Slate-400
-  doc.line(24, currentY + 12, 84, currentY + 12);
-  doc.line(126, currentY + 12, 186, currentY + 12);
-
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(15, 23, 42);
-  doc.text(worker.name, 54, currentY + 16, { align: 'center' });
-  doc.text('JOB Martin Bandiera', 156, currentY + 16, { align: 'center' });
-
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Firma y Aclaración del Empleado / Operario', 54, currentY + 20, { align: 'center' });
-  doc.text('Dirección de Operaciones / Sello y Firma', 156, currentY + 20, { align: 'center' });
+  // Signatures have been completely removed as requested by user.
 
   // Bottom Footer
   doc.setFontSize(6.5);
@@ -432,27 +417,7 @@ const renderGrupalSummarySheet = (doc: jsPDF, workers: WorkerLiquidationDetail[]
 
   currentY = (doc as any).lastAutoTable.finalY + 12;
 
-  // Signatures on the summary sheet
-  if (currentY > 240) {
-    doc.addPage();
-    currentY = 24;
-  }
-
-  doc.setDrawColor(148, 163, 184);
-  doc.line(24, currentY + 14, 84, currentY + 14);
-  doc.line(126, currentY + 14, 186, currentY + 14);
-
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(15, 23, 42);
-  doc.text('Dirección Operativa y Cuadrillas', 54, currentY + 18, { align: 'center' });
-  doc.text('Administración y Finanzas', 156, currentY + 18, { align: 'center' });
-
-  doc.setFontSize(7);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text('Revisión Técnica de Servicios Ejecutados', 54, currentY + 22, { align: 'center' });
-  doc.text('Aprobación de Fondos y Pago', 156, currentY + 22, { align: 'center' });
+  // Signatures have been completely removed as requested by user.
 
   // Summary Footer
   doc.setFontSize(6.5);

@@ -455,18 +455,6 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
               </p>
             </div>
           </div>
-
-          {/* Signatures & Conformity */}
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-800 grid grid-cols-2 gap-8 text-center text-xs">
-            <div className="pt-8 border-t border-dashed border-slate-300 dark:border-slate-700">
-              <p className="font-bold text-slate-900 dark:text-white">{leadTech}</p>
-              <p className="text-[10px] text-slate-400">Responsable Técnico - JOB Bandiera</p>
-            </div>
-            <div className="pt-8 border-t border-dashed border-slate-300 dark:border-slate-700">
-              <p className="font-bold text-slate-900 dark:text-white">{clientName}</p>
-              <p className="text-[10px] text-slate-400">Conformidad de Recepción Cliente</p>
-            </div>
-          </div>
         </div>
 
         {/* Footer Actions */}

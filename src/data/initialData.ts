@@ -78,7 +78,7 @@ export const ADMIN_PERMISSIONS: RolePermissions = {
   manageProjects: true,
   manageMaterials: true,
   manageVehicles: true,
-  manageFixedCosts: false,
+  manageFixedCosts: true,
   manageUsers: true,
   resetSystem: false,
   exportExcel: true,
