@@ -33,7 +33,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch {
       // ignore
     }
-    return false; // Default clean light matching the uploaded photo
+    return document.documentElement.classList.contains('dark');
   });
 
   const [colorTheme, setColorTheme] = useState<ColorTheme>(() => {
@@ -49,13 +49,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   });
 
   useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
     try {
       localStorage.setItem(DARK_MODE_STORAGE_KEY, darkMode.toString());
-      if (darkMode) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
     } catch {
       // ignore
     }
@@ -143,9 +139,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         themeClasses: getThemeClasses()
       }}
     >
-      <div className={darkMode ? 'dark' : ''}>
-        {children}
-      </div>
+      {children}
     </ThemeContext.Provider>
   );
 };

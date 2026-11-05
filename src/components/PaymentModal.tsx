@@ -17,6 +17,7 @@ import {
 import { TechnicalAuditRecord, PaymentEntry, ArchivedReceipt } from '../types';
 import { useData } from '../context/DataContext';
 import { generateReciboCobroPDF } from '../utils/pdfGenerator';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface PaymentModalProps {
   isOpen: boolean;
@@ -38,8 +39,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   if (!isOpen || records.length === 0) return null;
 
   const first = records[0];
-  const commonClient = first.clientName;
-  const commonInvoice = invoiceNumber || first.numeroFactura || '';
+  const distinctClients = new Set(records.map(r => r.clientName)).size;
+  const commonClient = distinctClients > 1 ? `Varios clientes (${distinctClients})` : first.clientName;
+  // Suggest an invoice only when every selected remito has that same one.
+  const sharedInvoice = records.every(r => r.numeroFactura === first.numeroFactura) ? first.numeroFactura : '';
+  const commonInvoice = invoiceNumber || sharedInvoice || '';
 
   // Sum total facturado of all selected remitos
   const totalFacturadoSum = useMemo(() => {
@@ -73,13 +77,13 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         amount: totalNetoACobrar,
         bank: 'Banco Galicia',
         reference: 'TR-',
-        paymentDate: new Date().toISOString().split('T')[0],
+        paymentDate: todayLocalISO(),
         notes: ''
       }
     ];
   });
 
-  const [paymentDate, setPaymentDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [paymentDate, setPaymentDate] = useState<string>(todayLocalISO());
   const [invoiceNumberState, setInvoiceNumberState] = useState<string>(commonInvoice);
   const [isSuccessView, setIsSuccessView] = useState(false);
   const [generatedReceipt, setGeneratedReceipt] = useState<ArchivedReceipt | null>(null);

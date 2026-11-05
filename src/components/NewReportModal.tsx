@@ -4,6 +4,7 @@ import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { FinancialMetricRecord } from '../types';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface NewReportModalProps {
   isOpen: boolean;
@@ -43,7 +44,7 @@ export const NewReportModal: React.FC<NewReportModalProps> = ({ isOpen, onClose 
       facturado: Number(facturado) || 0,
       cobrado: Number(cobrado) || 0,
       status,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalISO(),
       category,
       createdBy: currentUser.email,
       notes

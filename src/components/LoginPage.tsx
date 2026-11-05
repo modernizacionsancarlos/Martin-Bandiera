@@ -26,18 +26,16 @@ export const LoginPage: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = loginWithCredentials(identifier, password);
-      if (!res.success) {
-        setErrorMessage(res.message || 'Credenciales inválidas. Verifique su usuario y contraseña asignadas.');
-        setIsLoading(false);
-      }
-    }, 200);
+    const res = await loginWithCredentials(identifier, password);
+    if (!res.success) {
+      setErrorMessage(res.message || 'Credenciales inválidas. Verifique su correo y clave.');
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -91,7 +89,7 @@ export const LoginPage: React.FC = () => {
               Iniciar Sesión
             </h1>
             <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-              Ingrese su usuario o correo electrónico y su clave de acceso.
+              Ingrese su correo electrónico y su clave de acceso.
             </p>
           </div>
 
@@ -107,7 +105,7 @@ export const LoginPage: React.FC = () => {
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-300 block">
-                    Usuario o Correo Electrónico
+                    Correo Electrónico
                   </label>
                   <span className="text-[10px] text-emerald-400 font-semibold">
                     Admite @gmail.com
@@ -118,57 +116,14 @@ export const LoginPage: React.FC = () => {
                     <Mail className="w-4 h-4" />
                   </div>
                   <input
-                    type="text"
+                    type="email"
                     required
                     autoFocus
                     value={identifier}
                     onChange={e => setIdentifier(e.target.value)}
-                    placeholder="gastonvillalobos2019@gmail.com o admin@admin.com"
+                    placeholder="nombre@empresa.com"
                     className="w-full pl-10 pr-4 py-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-white text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#00c2ff] focus:border-transparent transition-all font-mono"
                   />
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                  <span className="text-[10px] text-slate-400">Atajos rápidos:</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('gastonvillalobos2019@gmail.com');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 font-mono font-bold cursor-pointer border border-cyan-800"
-                  >
-                    Gastón (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('rominabromeo@yahoo.com.ar');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-purple-950/80 hover:bg-purple-900 text-purple-300 font-mono font-bold cursor-pointer border border-purple-800"
-                  >
-                    Romina (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('martin@iipsa.com.ar');
-                      setPassword('123456');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 font-mono font-bold cursor-pointer border border-emerald-800"
-                  >
-                    Martin (123456)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIdentifier('admin@admin.com');
-                      setPassword('admin');
-                    }}
-                    className="text-[10px] px-2 py-0.5 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-mono font-bold cursor-pointer border border-amber-500/40"
-                  >
-                    Juan Pablo (admin)
-                  </button>
                 </div>
               </div>
 
@@ -186,7 +141,7 @@ export const LoginPage: React.FC = () => {
                     required
                     value={password}
                     onChange={e => setPassword(e.target.value)}
-                    placeholder="123456"
+                    placeholder="••••••••"
                     className="w-full pl-10 pr-11 py-3 rounded-2xl bg-slate-800/80 border border-slate-700/80 text-white text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#00c2ff] focus:border-transparent transition-all font-mono"
                   />
                   <button

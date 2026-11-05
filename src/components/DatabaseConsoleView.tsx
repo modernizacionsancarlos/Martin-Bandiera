@@ -32,6 +32,7 @@ import {
   Sliders,
   DollarSign
 } from 'lucide-react';
+import { todayLocalISO } from '../utils/dateUtils';
 
 type DatabaseTableKey =
   | 'users'
@@ -165,7 +166,7 @@ export const DatabaseConsoleView: React.FC = () => {
   const [selectedTable, setSelectedTable] = useState<DatabaseTableKey>('users');
   const [viewFormat, setViewFormat] = useState<'table' | 'json'>('table');
   const [searchQuery, setSearchQuery] = useState('');
-  const [showPasswords, setShowPasswords] = useState(true);
+  const [showPasswords, setShowPasswords] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   // Edit / Inspect Modal
@@ -179,7 +180,7 @@ export const DatabaseConsoleView: React.FC = () => {
   const [quickUserForm, setQuickUserForm] = useState({
     displayName: '',
     email: '',
-    password: '123456',
+    password: '',
     role: 'Capataz' as UserRole,
     phone: '',
     specialty: '',
@@ -328,7 +329,7 @@ export const DatabaseConsoleView: React.FC = () => {
     createUser({
       displayName: quickUserForm.displayName.trim() || quickUserForm.email.split('@')[0],
       email: quickUserForm.email.trim().toLowerCase(),
-      password: quickUserForm.password.trim() || '123456',
+      password: quickUserForm.password.trim(),
       role: quickUserForm.role,
       phone: quickUserForm.phone.trim(),
       specialty: quickUserForm.specialty.trim(),
@@ -343,7 +344,7 @@ export const DatabaseConsoleView: React.FC = () => {
     setQuickUserForm({
       displayName: '',
       email: '',
-      password: '123456',
+      password: '',
       role: 'Capataz',
       phone: '',
       specialty: '',
@@ -379,7 +380,7 @@ export const DatabaseConsoleView: React.FC = () => {
 
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(fullDbDump, null, 2));
     const downloadAnchor = document.createElement('a');
-    const dateStamp = new Date().toISOString().split('T')[0];
+    const dateStamp = todayLocalISO();
     downloadAnchor.setAttribute('href', dataStr);
     downloadAnchor.setAttribute('download', `backup_database_job_bandiera_${dateStamp}.json`);
     document.body.appendChild(downloadAnchor);
@@ -572,7 +573,7 @@ export const DatabaseConsoleView: React.FC = () => {
         </div>
 
         {/* Right: Toggles & Stats */}
-        <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-2.5 w-full sm:w-auto justify-end">
           {selectedTable === 'users' && (
             <button
               onClick={() => setShowPasswords(!showPasswords)}
@@ -660,7 +661,7 @@ export const DatabaseConsoleView: React.FC = () => {
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
                 {filteredRecords.map((u: UserProfile) => {
                   const isCurrent = currentUser?.uid === u.uid;
-                  const pass = u.password || '123456';
+                  const pass = '••••••••';
 
                   return (
                     <tr
@@ -988,10 +989,10 @@ export const DatabaseConsoleView: React.FC = () => {
                     required
                     value={quickUserForm.password}
                     onChange={e => setQuickUserForm({ ...quickUserForm, password: e.target.value })}
-                    placeholder="123456"
+                    placeholder="Mínimo 8 caracteres"
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:border-purple-500 font-mono font-bold"
                   />
-                  <span className="text-[10px] text-slate-400 mt-0.5 block">Por defecto: 123456</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">Sin clave = perfil sin acceso al sistema</span>
                 </div>
 
                 <div>

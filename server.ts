@@ -1,203 +1,36 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
-import { GoogleGenAI, Type } from '@google/genai';
+import { scanRemito } from './server/scanRemito.js';
+import { requireUser } from './server/requireUser.js';
 import dotenv from 'dotenv';
 
-dotenv.config();
+dotenv.config({ path: ['.env.local', '.env'] });
 
 async function startServer() {
   const app = express();
   const port = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  // Accept larger payloads for high resolution remito photos (up to 50MB)
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-  const ai = new GoogleGenAI({
-    apiKey: process.env.GEMINI_API_KEY,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
-  });
+  // Photos are downscaled in the browser; keep in line with Vercel's 4.5MB body limit
+  app.use(express.json({ limit: '5mb' }));
 
   // Health check endpoint
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', serverTime: new Date().toISOString() });
   });
 
-  // AI OCR Scan Remito endpoint
+  // AI OCR Scan Remito endpoint (signed-in users only)
   app.post('/api/ai/scan-remito', async (req, res) => {
     try {
-      const { image, mimeType = 'image/jpeg', knownClients = [], knownWorkers = [] } = req.body;
-
-      if (!image) {
-        return res.status(400).json({ success: false, error: 'Se requiere una imagen en base64 para procesar el remito.' });
+      const userId = await requireUser(req.headers.authorization);
+      if (!userId) {
+        return res.status(401).json({ success: false, error: 'Debe iniciar sesión.' });
       }
-
-      // Remove data URL prefix if sent
-      const base64Data = image.replace(/^data:[a-zA-Z0-9.-]+\/[a-zA-Z0-9.+]+;base64,/, '');
-
-      const clientHints = Array.isArray(knownClients) && knownClients.length > 0 
-        ? `\nClientes / Empresas conocidas en el sistema para referencia: ${knownClients.slice(0, 60).join(', ')}.`
-        : '';
-      const workerHints = Array.isArray(knownWorkers) && knownWorkers.length > 0 
-        ? `\nPersonal / Técnicos registrados para referencia de nombres: ${knownWorkers.slice(0, 60).join(', ')}.`
-        : '';
-
-      const systemInstruction = `Eres un asistente especializado en reconocimiento óptico de caracteres (OCR) de alta precisión para digitalizar remitos manuscritos (escritos a mano en papel o talonario físico) para empresas de obras, ingeniería eléctrica y mantenimiento en Argentina.
-Analiza con detenimiento la imagen provista y extrae con máxima fidelidad cada campo escrito a mano.
-${clientHints}
-${workerHints}
-
-Criterios de extracción:
-1. remitoPapel: Número de remito en papel o talonario (ej: "0001-0004523", "4523"). Si no se aprecia, dejar en blanco.
-2. fecha: Fecha del remito en formato YYYY-MM-DD. Si solo indica día y mes, estima el año actual (2025 o 2026).
-3. cliente: Nombre de la empresa, bodega o contratista indicado.
-4. ubicacion: Localidad, finca o departamento geográfico (ej: "San Carlos", "Valle de Uco", "Tupungato").
-5. puntoTrabajo: Área, máquina o pozo puntual atendido (ej: "Pozo 4", "Tablero General", "Sala de Bombas").
-6. descripcion: Transcripción detallada y limpia de todas las tareas y trabajos técnicos realizados anotados en el papel.
-7. horaEntrada: Hora de llegada en formato HH:MM (ej: "08:00").
-8. horaSalida: Hora de retiro en formato HH:MM (ej: "12:30").
-9. horasTrabajadas: Cantidad de horas dedicadas (número flotante, ej: 4.5). Si figuran entrada y salida, calcula las horas.
-10. kilometros: Kilómetros de traslado si figuran en el remito.
-11. viajes: Cantidad de viajes (por defecto 1 si hubo traslado, o 0 si no hubo).
-12. esGuardia: true si especifica guardia, urgencia, o fuera de horario; de lo contrario false.
-13. tecnicoLider: Nombre del técnico a cargo o firmante del remito.
-14. cuadrilla: Lista de los demás operarios, ayudantes u oficiales que participaron con su nombre y rol deducido ("Oficial" o "Ayudante").
-15. materiales: Lista de materiales o repuestos utilizados con su descripción y cantidad si figuran.
-16. observaciones: Comentarios sobre palabras de difícil lectura o notas complementarias.
-17. confianzaLectura: Porcentaje estimado (0 a 100) de claridad de la caligrafía manuscrita.`;
-
-      let response;
-      // Prioritize gemini-3.6-flash which is responsive, high-capacity, and avoids 503 high-demand errors
-      const candidateModels = ['gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
-      let lastError: any = null;
-
-      for (const model of candidateModels) {
-        // Try up to 2 attempts per candidate model
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          try {
-            console.log(`[Gemini OCR] Trying model ${model} (attempt ${attempt}/2)...`);
-            response = await ai.models.generateContent({
-              model,
-              contents: [
-                {
-                  role: 'user',
-                  parts: [
-                    {
-                      inlineData: {
-                        mimeType,
-                        data: base64Data,
-                      },
-                    },
-                    {
-                      text: 'Extrae con exactitud y máxima fidelidad todos los datos de este remito en papel manuscrito y devuélvelos estructurados en JSON.',
-                    },
-                  ],
-                },
-              ],
-              config: {
-                systemInstruction,
-                responseMimeType: 'application/json',
-                responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                    remitoPapel: { type: Type.STRING },
-                    fecha: { type: Type.STRING },
-                    cliente: { type: Type.STRING },
-                    ubicacion: { type: Type.STRING },
-                    puntoTrabajo: { type: Type.STRING },
-                    descripcion: { type: Type.STRING },
-                    horaEntrada: { type: Type.STRING },
-                    horaSalida: { type: Type.STRING },
-                    horasTrabajadas: { type: Type.NUMBER },
-                    kilometros: { type: Type.NUMBER },
-                    viajes: { type: Type.INTEGER },
-                    esGuardia: { type: Type.BOOLEAN },
-                    tecnicoLider: { type: Type.STRING },
-                    cuadrilla: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          nombre: { type: Type.STRING },
-                          rol: { type: Type.STRING, description: 'Oficial o Ayudante' },
-                        },
-                        required: ['nombre'],
-                      },
-                    },
-                    materiales: {
-                      type: Type.ARRAY,
-                      items: {
-                        type: Type.OBJECT,
-                        properties: {
-                          descripcion: { type: Type.STRING },
-                          cantidad: { type: Type.NUMBER },
-                        },
-                        required: ['descripcion'],
-                      },
-                    },
-                    observaciones: { type: Type.STRING },
-                    confianzaLectura: { type: Type.INTEGER },
-                  },
-                  required: ['cliente', 'descripcion'],
-                },
-              },
-            });
-
-            if (response?.text) {
-              console.log(`[Gemini OCR] Model ${model} succeeded!`);
-              break;
-            }
-          } catch (mErr: any) {
-            const errStr = mErr?.message || String(mErr);
-            console.warn(`[Gemini OCR] Model ${model} attempt ${attempt} failed:`, errStr.slice(0, 150));
-            lastError = mErr;
-            // Wait briefly before retrying
-            await new Promise(r => setTimeout(r, 600));
-          }
-        }
-        if (response?.text) {
-          break;
-        }
-      }
-
-      if (!response?.text) {
-        let cleanMsg = 'El servicio de IA se encuentra momentáneamente saturado. Por favor, reintenta en unos segundos.';
-        try {
-          if (lastError?.message) {
-            const parsed = JSON.parse(lastError.message);
-            if (parsed?.error?.message) {
-              cleanMsg = parsed.error.message;
-            }
-          }
-        } catch {
-          if (typeof lastError?.message === 'string') {
-            cleanMsg = lastError.message;
-          }
-        }
-        return res.status(503).json({
-          success: false,
-          error: cleanMsg
-        });
-      }
-
-      const rawJson = response.text || '{}';
-      const parsedData = JSON.parse(rawJson);
-
-      return res.json({
-        success: true,
-        data: parsedData,
-      });
+      const result = await scanRemito(req.body);
+      return res.status(result.status).json(result.body);
     } catch (err: any) {
       console.error('[API Scan Remito Error]:', err);
-      return res.status(500).json({
-        success: false,
-        error: err?.message || 'Error al procesar el remito con IA.',
-      });
+      return res.status(500).json({ success: false, error: err?.message || 'Error al procesar el remito con IA.' });
     }
   });
 

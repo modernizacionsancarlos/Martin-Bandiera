@@ -29,10 +29,11 @@ import { TechnicalAuditRecord } from '../types';
 import { useData } from '../context/DataContext';
 import { PaymentModal } from './PaymentModal';
 import { ExcelImportModal } from './ExcelImportModal';
-import { PasarAFacturadoModal } from './PasarAFacturadoModal';
+import { PasarAFacturadoModal, isSinFactura } from './PasarAFacturadoModal';
 import { ActualizarDescripcionesModal } from './ActualizarDescripcionesModal';
 import { generateFacturaAgrupadaPDF, generateRemitoPasadoPDF } from '../utils/pdfGenerator';
 import { exportFacturadosToExcel } from '../utils/excelParser';
+import { todayLocalISO, parseLocalDate } from '../utils/dateUtils';
 
 export const FacturadoView: React.FC = () => {
   const { technicalAuditRecords, updateTechnicalAuditRecord, bulkPassToFacturado } = useData();
@@ -42,7 +43,7 @@ export const FacturadoView: React.FC = () => {
   const [selectedClientFilter, setSelectedClientFilter] = useState<string>('ALL');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  const [statusInvoiceFilter, setStatusInvoiceFilter] = useState<'ALL' | 'CON_FACTURA' | 'SIN_FACTURA' | 'EN_MORA'>('ALL');
+  const [statusInvoiceFilter, setStatusInvoiceFilter] = useState<'ALL' | 'CON_FACTURA' | 'SIN_FACTURA' | 'EN_MORA'>('CON_FACTURA');
 
   // Selection
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
@@ -63,7 +64,7 @@ export const FacturadoView: React.FC = () => {
   const [showGroupInvoiceModal, setShowGroupInvoiceModal] = useState(false);
   const [groupInvoiceMode, setGroupInvoiceMode] = useState<'new' | 'existing'>('new');
   const [newInvoiceNumber, setNewInvoiceNumber] = useState('');
-  const [newInvoiceDate, setNewInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newInvoiceDate, setNewInvoiceDate] = useState(todayLocalISO());
   const [selectedExistingInvoice, setSelectedExistingInvoice] = useState('');
 
   // Payment Modal state
@@ -94,7 +95,7 @@ export const FacturadoView: React.FC = () => {
   const existingInvoices = useMemo(() => {
     const map = new Map<string, { invoiceNumber: string; clientName: string; invoiceDate: string; count: number }>();
     facturados.forEach(r => {
-      if (r.numeroFactura) {
+      if (!isSinFactura(r)) {
         const key = `${r.clientName}___${r.numeroFactura}`;
         if (!map.has(key)) {
           map.set(key, {
@@ -116,7 +117,7 @@ export const FacturadoView: React.FC = () => {
   const getDaysElapsed = (invoiceDateStr?: string, fallbackDate?: string): number => {
     const dateStr = invoiceDateStr || fallbackDate;
     if (!dateStr) return 0;
-    const date = new Date(dateStr);
+    const date = parseLocalDate(dateStr);
     const now = new Date();
     // Normalize to midnight
     const diff = Math.floor((now.setHours(0, 0, 0, 0) - date.setHours(0, 0, 0, 0)) / (1000 * 60 * 60 * 24));
@@ -147,8 +148,8 @@ export const FacturadoView: React.FC = () => {
       if (dateTo && recordDate > dateTo) return false;
 
       // Invoice status filter
-      if (statusInvoiceFilter === 'CON_FACTURA' && !r.numeroFactura) return false;
-      if (statusInvoiceFilter === 'SIN_FACTURA' && r.numeroFactura) return false;
+      if (statusInvoiceFilter === 'CON_FACTURA' && isSinFactura(r)) return false;
+      if (statusInvoiceFilter === 'SIN_FACTURA' && !isSinFactura(r)) return false;
       if (statusInvoiceFilter === 'EN_MORA') {
         const days = getDaysElapsed(r.fechaFactura, r.date);
         if (days <= 30) return false;
@@ -190,6 +191,14 @@ export const FacturadoView: React.FC = () => {
     return Math.round(totalDays / facturados.length);
   }, [facturados]);
 
+  const sinFacturaCount = useMemo(() => facturados.filter(isSinFactura).length, [facturados]);
+
+  // Tabs and selector share one filter; a selection from another tab must not carry over.
+  const changeInvoiceFilter = (value: typeof statusInvoiceFilter) => {
+    setStatusInvoiceFilter(value);
+    setSelectedRecords([]);
+  };
+
   // Handle inline invoice number save
   const handleSaveInvoiceNumber = (id: string) => {
     updateTechnicalAuditRecord(id, { numeroFactura: tempInvoiceVal.trim() });
@@ -219,6 +228,15 @@ export const FacturadoView: React.FC = () => {
     return facturados.filter(r => selectedRecords.includes(r.id));
   }, [facturados, selectedRecords]);
 
+  // The selected remitos, or everything on screen when nothing is selected.
+  const cobroSet = selectedRecordsData.length > 0 ? selectedRecordsData : filteredRecords;
+
+  const handleOpenCobroSet = () => {
+    if (cobroSet.length === 0) return;
+    setRecordsToPay(cobroSet);
+    setPaymentModalOpen(true);
+  };
+
   const selectedClients = useMemo(() => {
     return Array.from(new Set(selectedRecordsData.map(r => r.clientName)));
   }, [selectedRecordsData]);
@@ -241,7 +259,7 @@ export const FacturadoView: React.FC = () => {
 
     generateFacturaAgrupadaPDF({
       invoiceNumber,
-      invoiceDate: matchingRecords[0]?.fechaFactura || matchingRecords[0]?.date || new Date().toISOString().split('T')[0],
+      invoiceDate: matchingRecords[0]?.fechaFactura || matchingRecords[0]?.date || todayLocalISO(),
       clientName: matchingRecords[0]?.clientName || 'Cliente',
       records: matchingRecords
     });
@@ -266,14 +284,7 @@ export const FacturadoView: React.FC = () => {
   };
 
   const handleMoveToPasado = (id: string) => {
-    const record = facturados.find(r => r.id === id);
-    if (record) {
-      const basePrice = record.billedPrice > 0 ? record.billedPrice : record.suggestedPrice;
-      const updatedPrice = Math.round(basePrice * 1.07);
-      updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja', billedPrice: updatedPrice });
-    } else {
-      updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja' });
-    }
+    updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja' });
   };
 
   // Selection toggle
@@ -503,7 +514,7 @@ export const FacturadoView: React.FC = () => {
 
           {/* Date Range From/To */}
           <div className="flex items-center gap-2">
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-0">
               <input
                 type="date"
                 value={dateFrom}
@@ -513,7 +524,7 @@ export const FacturadoView: React.FC = () => {
               />
             </div>
             <span className="text-slate-400 text-xs">a</span>
-            <div className="relative flex-1">
+            <div className="relative flex-1 min-w-0">
               <input
                 type="date"
                 value={dateTo}
@@ -528,16 +539,40 @@ export const FacturadoView: React.FC = () => {
           <div>
             <select
               value={statusInvoiceFilter}
-              onChange={e => setStatusInvoiceFilter(e.target.value as any)}
+              onChange={e => changeInvoiceFilter(e.target.value as typeof statusInvoiceFilter)}
               className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-white font-bold cursor-pointer focus:ring-2 focus:ring-blue-500"
             >
               <option value="ALL">Todas las Facturas y Estados</option>
               <option value="CON_FACTURA">Con Nº de Factura Asignado</option>
-              <option value="SIN_FACTURA">Pendientes de Factura (Sin Nº)</option>
+              <option value="SIN_FACTURA">Sin Factura</option>
               <option value="EN_MORA">En Mora (+30 días desde facturación)</option>
             </select>
           </div>
 
+        </div>
+
+        {/* Con factura / Sin factura */}
+        <div className="flex items-center gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800 overflow-x-auto" role="tablist" aria-label="Separar por factura">
+          {([
+            { value: 'CON_FACTURA', label: 'Con factura', count: facturados.length - sinFacturaCount },
+            { value: 'SIN_FACTURA', label: 'Sin factura', count: sinFacturaCount },
+            { value: 'ALL', label: 'Todos', count: facturados.length }
+          ] as const).map(tab => (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={statusInvoiceFilter === tab.value}
+              onClick={() => changeInvoiceFilter(tab.value)}
+              className={`px-3.5 py-2 rounded-xl text-xs font-black whitespace-nowrap cursor-pointer transition-colors ${
+                statusInvoiceFilter === tab.value
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            >
+              {tab.label} ({tab.count})
+            </button>
+          ))}
         </div>
 
         {/* Quick info bar for filters & bulk selection */}
@@ -546,13 +581,12 @@ export const FacturadoView: React.FC = () => {
             <span className="text-slate-500 dark:text-slate-400">
               Mostrando <strong className="text-slate-900 dark:text-white">{filteredRecords.length}</strong> de {facturados.length} remitos
             </span>
-            {(selectedClientFilter !== 'ALL' || dateFrom || dateTo || statusInvoiceFilter !== 'ALL' || searchTerm) && (
+            {(selectedClientFilter !== 'ALL' || dateFrom || dateTo || searchTerm) && (
               <button
                 onClick={() => {
                   setSelectedClientFilter('ALL');
                   setDateFrom('');
                   setDateTo('');
-                  setStatusInvoiceFilter('ALL');
                   setSearchTerm('');
                 }}
                 className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold cursor-pointer"
@@ -562,7 +596,16 @@ export const FacturadoView: React.FC = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleOpenCobroSet}
+              disabled={cobroSet.length === 0}
+              className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-xs font-black text-white transition-colors cursor-pointer"
+              title={selectedRecordsData.length > 0 ? 'Pasar los remitos seleccionados a Cobrado' : 'Pasar a Cobrado todos los remitos que se ven en pantalla'}
+            >
+              PASAR A COBRADO ({cobroSet.length})
+            </button>
             <button
               onClick={handleSelectAll}
               className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-100 transition-colors cursor-pointer"
@@ -812,7 +855,7 @@ export const FacturadoView: React.FC = () => {
                               </span>
                               <Edit2 className="w-2.5 h-2.5 opacity-0 group-hover/billed:opacity-100 text-slate-400 hover:text-blue-500 transition-opacity" />
                             </div>
-                            {record.montoBaseRemito !== undefined && record.recargo7Pct !== undefined && (
+                            {record.montoBaseRemito !== undefined && !!record.recargo7Pct && (
                               <span className="text-[10px] text-blue-600 dark:text-blue-400 font-sans font-normal" title={`Base: $${(record.montoBaseRemito || 0).toLocaleString('es-AR')} + 7% ($${(record.recargo7Pct || 0).toLocaleString('es-AR')}) + IVA ${record.ivaPct || 21}%`}>
                                 Base: ${(record.montoBaseRemito || 0).toLocaleString('es-AR')} (+7% + IVA {record.ivaPct || 21}%)
                               </span>
@@ -1130,6 +1173,7 @@ export const FacturadoView: React.FC = () => {
         isOpen={pasarFacturadoOpen}
         onClose={() => setPasarFacturadoOpen(false)}
         availableRecords={availableToInvoice}
+        allRecords={technicalAuditRecords}
         onConfirm={async (recordIds, num, date, billing) => {
           await bulkPassToFacturado(recordIds, num, date, billing);
           setPasarFacturadoOpen(false);

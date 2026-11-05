@@ -63,6 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     canViewFinancials,
     canResetSystem,
     canManageUsers,
+    canCreateRemito,
     permissions,
     users,
     logout
@@ -130,6 +131,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
           restricted: !permissions.manageCollections,
           badge: countArchivos > 0 ? countArchivos : null,
           badgeColor: 'bg-slate-700 text-slate-200'
+        },
+        {
+          id: 'papelera',
+          label: 'Papelera',
+          subtitle: 'Recuperar lo eliminado',
+          icon: Trash2,
+          restricted: !permissions.manageCollections && !permissions.manageBilling
         }
       ]
     },
@@ -303,6 +311,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Quick Action Button */}
+      {canCreateRemito && (
       <div className="p-3 border-b border-slate-800/80">
         <button
           onClick={onOpenNewReport}
@@ -315,6 +324,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           {isOpen && <span className="truncate">NUEVO REPORTE</span>}
         </button>
       </div>
+      )}
 
       {/* Navigation Links Scrollable */}
       <div className="flex-1 overflow-y-auto px-2.5 py-4 space-y-6 text-xs">

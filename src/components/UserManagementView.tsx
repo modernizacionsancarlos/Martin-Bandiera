@@ -256,7 +256,7 @@ export const UserManagementView: React.FC = () => {
       : formData.customPermissions;
 
     if (editingUserId) {
-      const targetPassword = (formData.password && formData.password.trim()) || '123456';
+      const targetPassword = (formData.password || '').trim();
       updateUser(editingUserId, {
         displayName: formData.displayName.trim(),
         email: formData.email.trim().toLowerCase(),
@@ -287,7 +287,7 @@ export const UserManagementView: React.FC = () => {
         w => (w.email && w.email.toLowerCase().trim() === cleanEmail) ||
              (normName && normalizeWorkerName(w.name) === normName)
       );
-      const createdPass = formData.password ? formData.password.trim() : '123456';
+      const createdPass = (formData.password || '').trim();
       createUser({
         uid: matchingWorker?.id,
         displayName: formData.displayName.trim(),
@@ -640,13 +640,12 @@ export const UserManagementView: React.FC = () => {
                             <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg w-fit border border-slate-200 dark:border-slate-700">
                               <KeyRound className="w-3 h-3 text-slate-400" />
                               <span className="font-bold text-slate-800 dark:text-emerald-400">
-                                {user.password || '123456'}
+                                {'••••••••'}
                               </span>
                               <button
                                 type="button"
                                 onClick={() => {
-                                  navigator.clipboard.writeText(user.password || '123456');
-                                  showToast('Clave copiada');
+                                  showToast('Las claves no se pueden ver. Para cambiarla, edite el usuario.');
                                 }}
                                 className="text-slate-400 hover:text-slate-700 dark:hover:text-white ml-1 cursor-pointer"
                                 title="Copiar clave"
@@ -1071,10 +1070,10 @@ export const UserManagementView: React.FC = () => {
                   <div>
                     <div className="flex items-center justify-between mb-1">
                       <label className="block font-bold text-slate-700 dark:text-slate-300">
-                        Contraseña o PIN de Acceso
+                        Nueva clave de acceso (mín. 8 caracteres)
                       </label>
                       <span className="text-[10px] text-slate-400">
-                        Clave activa para login
+                        Vacío = no cambiar
                       </span>
                     </div>
                     <div className="relative">
@@ -1083,26 +1082,9 @@ export const UserManagementView: React.FC = () => {
                         type="text"
                         value={formData.password}
                         onChange={e => setFormData({ ...formData, password: e.target.value })}
-                        placeholder="Clave numérica o contraseña (por defecto: 123456)"
+                        placeholder="Dejar vacío para no cambiar"
                         className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono focus:outline-none focus:border-purple-500 font-bold"
                       />
-                    </div>
-                    <div className="flex items-center gap-1.5 mt-1.5">
-                      <span className="text-[10px] text-slate-400">Atajos de clave:</span>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, password: '123456' })}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-emerald-600 dark:text-emerald-400 font-mono font-bold cursor-pointer"
-                      >
-                        123456
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, password: 'admin' })}
-                        className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-amber-600 dark:text-amber-400 font-mono font-bold cursor-pointer"
-                      >
-                        admin
-                      </button>
                     </div>
                   </div>
 

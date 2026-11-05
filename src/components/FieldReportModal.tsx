@@ -25,6 +25,7 @@ import { useData } from '../context/DataContext';
 import { useAuth, getDeletedUsersTombstone } from '../context/AuthContext';
 import { calculateAuditCosts, isWorkerOficial, roundCurrency, formatCurrency, isAdministrativeProfile, normalizeWorkerName } from '../utils/calculationUtils';
 import { ClientItem, UserRole, TeamMemberAssigned, TechnicalAuditRecord } from '../types';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface FieldReportModalProps {
   isOpen: boolean;
@@ -51,7 +52,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
   const currentRemitoId = recordToEdit ? recordToEdit.remitoId : `#${nextRemitoNum}-2026`;
 
   // 1. CONFIGURACIÓN INICIAL
-  const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState<string>(todayLocalISO());
   const [remitoPapel, setRemitoPapel] = useState<string>('');
   const [isGuardia, setIsGuardia] = useState<boolean>(false);
   const [guardiaMode, setGuardiaMode] = useState<'fijo' | 'por_hora'>('fijo');
@@ -117,7 +118,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
     if (!isOpen) return;
 
     if (recordToEdit) {
-      setDate(recordToEdit.date || new Date().toISOString().split('T')[0]);
+      setDate(recordToEdit.date || todayLocalISO());
       setRemitoPapel(recordToEdit.remitoPapel || '');
       setIsGuardia(!!recordToEdit.isGuardia);
       setGuardiaMode(recordToEdit.guardiaMode || 'fijo');
@@ -207,7 +208,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         setHasSignature(false);
       }
     } else {
-      setDate(new Date().toISOString().split('T')[0]);
+      setDate(todayLocalISO());
       setRemitoPapel('');
       setIsGuardia(false);
       setGuardiaMode('fijo');
@@ -581,11 +582,13 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
   };
 
   // Client search filter connected directly to the Client Database
+  // Imported client rows can miss fields, so read every one defensively
+  const clientSearch = searchClient.toLowerCase();
   const filteredClients = clients.filter(c =>
-    c.razonSocial.toLowerCase().includes(searchClient.toLowerCase()) ||
-    c.fincaLocacion.toLowerCase().includes(searchClient.toLowerCase()) ||
-    c.cuit.includes(searchClient) ||
-    c.direccionFiscal.toLowerCase().includes(searchClient.toLowerCase())
+    String(c.razonSocial ?? '').toLowerCase().includes(clientSearch) ||
+    String(c.fincaLocacion ?? '').toLowerCase().includes(clientSearch) ||
+    String(c.cuit ?? '').includes(searchClient) ||
+    String(c.direccionFiscal ?? '').toLowerCase().includes(clientSearch)
   );
 
   const handleSelectClient = (client: ClientItem) => {

@@ -1,0 +1,11 @@
+node_modules
+dist
+.env*
+CREDENCIALES_LOCAL.txt
+scripts
+.claude
+firebase-applet-config.json
+android
+assets
+*.apk
+*.aab

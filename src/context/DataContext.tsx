@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useAuth, getDeletedUsersTombstone, unmarkUserAsDeletedLocally, recordDeletedUserLocally } from './AuthContext';
 import {
   FinancialMetricRecord,
@@ -15,6 +15,7 @@ import {
   VehicleItem,
   VehicleEventItem
 } from '../types';
+import { BillingDetailsPayload, billingBase } from '../components/PasarAFacturadoModal';
 import {
   INITIAL_FINANCIAL_REPORTS,
   INITIAL_PROJECTS,
@@ -89,6 +90,7 @@ import {
   setSystemStatusInFirestore,
   normalizeTechnicalAuditRecord
 } from '../services/firestoreSync';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface MonthlyPerformanceData {
   monthKey: string;     // e.g. "2026-01"
@@ -123,7 +125,7 @@ interface DataContextType {
   addTechnicalAuditRecord: (record: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => void;
   bulkAddTechnicalAuditRecords: (records: Partial<TechnicalAuditRecord>[]) => void;
   bulkUpdateAuditRecordDescriptions: (updates: { id: string; description: string }[]) => Promise<number>;
-  bulkPassToFacturado: (recordIds: string[], numeroFactura: string, fechaFactura: string) => Promise<number>;
+  bulkPassToFacturado: (recordIds: string[], numeroFactura: string, fechaFactura: string, billing?: BillingDetailsPayload) => Promise<number>;
   updateTechnicalAuditRecord: (id: string, updates: Partial<TechnicalAuditRecord>) => void;
   deleteTechnicalAuditRecord: (id: string) => void;
 
@@ -209,7 +211,7 @@ const sortWorkersAlphabetically = (list: WorkerItem[]): WorkerItem[] => {
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { users, createUser, updateUser, deleteUser } = useAuth();
+  const { users, createUser, updateUser, deleteUser, currentUser } = useAuth();
 
   // Production-Ready Default States: Empty collections by default so publishing never re-seeds demo data
   const [financialReports, setFinancialReports] = useState<FinancialMetricRecord[]>(() => {
@@ -361,16 +363,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (deletedUids.has(w.id) || (em && deletedEmails.has(em)) || (norm && deletedNames.has(norm))) return false;
           return true;
         });
-      } else {
-        // Fallback only if Firestore is completely empty and not zero-state
-        if (!isSystemZeroStateActive()) {
-          activeList = INITIAL_WORKERS.filter(w => {
-            const em = (w.email || '').toLowerCase().trim();
-            const norm = normalizeWorkerName(w.name);
-            return !deletedUids.has(w.id) && !deletedEmails.has(em) && !deletedNames.has(norm);
-          });
-        }
       }
+      // Empty database = empty list. Demo workers are no longer injected.
 
       const deduplicated = deduplicateWorkersList(activeList);
       const validWorkers = sortWorkersAlphabetically(
@@ -396,82 +390,44 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     });
 
-    // 3. Technical audit records (remitos) synchronization: Reflects exact database state
+    // 3. Technical audit records (remitos): the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubAudits = subscribeAuditRecords(remoteAudits => {
       if (!isMounted) return;
-      if (remoteAudits && remoteAudits.length > 0) {
-        setTechnicalAuditRecords(remoteAudits);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(remoteAudits));
-        } catch {}
-      } else {
-        // Fallback: If cloud has no audits yet, check if there are locally stored reports from prior sessions to auto-seed to cloud
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_tech_audits`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setTechnicalAuditRecords(parsed);
-              saveAuditRecordsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
-      }
+      const list = remoteAudits || [];
+      setTechnicalAuditRecords(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 4. Clients database synchronization: Reflects exact database state
+    // 4. Clients: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubClients = subscribeClients(remoteClients => {
       if (!isMounted) return;
-      if (remoteClients && remoteClients.length > 0) {
-        setClients(remoteClients);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_clients`, JSON.stringify(remoteClients));
-        } catch {}
-      } else {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_clients`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setClients(parsed);
-              saveClientsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
-      }
+      const list = remoteClients || [];
+      setClients(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_clients`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 5. Materials in cloud: Reflects exact database state
+    // 5. Materials: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubMaterials = subscribeMaterials(remoteMaterials => {
       if (!isMounted) return;
-      if (remoteMaterials && remoteMaterials.length > 0) {
-        setMaterials(remoteMaterials);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(remoteMaterials));
-        } catch {}
-      } else {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_materials`);
-          if (cached) {
-            const parsed = JSON.parse(cached);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              setMaterials(parsed);
-              saveMaterialsBatchToFirestore(parsed).catch(() => {});
-            }
-          }
-        } catch {}
-      }
+      const list = remoteMaterials || [];
+      setMaterials(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 6. Financial reports in cloud
+    // 6. Financial reports: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubFinancials = subscribeFinancialReports(remoteFinancials => {
       if (!isMounted) return;
-      if (remoteFinancials && remoteFinancials.length > 0) {
-        setFinancialReports(remoteFinancials);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_financials`, JSON.stringify(remoteFinancials));
-        } catch {}
-      }
+      const list = remoteFinancials || [];
+      setFinancialReports(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_financials`, JSON.stringify(list));
+      } catch {}
     });
 
     // 7. Technical Cost Parameters in cloud
@@ -485,77 +441,54 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // 8. Archived Receipts in cloud
+    // 8. Archived receipts: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubReceipts = subscribeArchivedReceipts(remoteReceipts => {
       if (!isMounted) return;
-      if (remoteReceipts && remoteReceipts.length > 0) {
-        setArchivedReceipts(remoteReceipts);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_archived_receipts`, JSON.stringify(remoteReceipts));
-        } catch {}
-      }
+      const list = remoteReceipts || [];
+      setArchivedReceipts(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_archived_receipts`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 9. Projects in cloud
+    // 9. Projects: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubProjects = subscribeProjects(remoteProjects => {
       if (!isMounted) return;
-      if (remoteProjects && remoteProjects.length > 0) {
-        setProjects(remoteProjects);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_projects`, JSON.stringify(remoteProjects));
-        } catch {}
-      }
+      const list = remoteProjects || [];
+      setProjects(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_projects`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 10. Maintenance Services in cloud
+    // 10. Maintenance services: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubMaintenance = subscribeMaintenanceServices(remoteServices => {
       if (!isMounted) return;
-      if (remoteServices && remoteServices.length > 0) {
-        setMaintenanceServices(remoteServices);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_maintenance`, JSON.stringify(remoteServices));
-        } catch {}
-      }
+      const list = remoteServices || [];
+      setMaintenanceServices(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_maintenance`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 11. Vehicles in cloud
+    // 11. Vehicles: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubVehicles = subscribeVehicles(remoteVehicles => {
       if (!isMounted) return;
-      if (remoteVehicles && remoteVehicles.length > 0) {
-        setVehicles(remoteVehicles);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_vehicles`, JSON.stringify(remoteVehicles));
-        } catch {}
-      } else if (!isSystemZeroStateActive()) {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_vehicles`);
-          const toSeed = cached ? JSON.parse(cached) : INITIAL_VEHICLES;
-          if (Array.isArray(toSeed) && toSeed.length > 0) {
-            setVehicles(toSeed);
-            saveVehiclesBatchToFirestore(toSeed).catch(() => {});
-          }
-        } catch {}
-      }
+      const list = remoteVehicles || [];
+      setVehicles(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_vehicles`, JSON.stringify(list));
+      } catch {}
     });
 
-    // 12. Vehicle Events in cloud
+    // 12. Vehicle events: the database is authoritative, an empty result means empty (never re-seed from cache)
     const unsubVehicleEvents = subscribeVehicleEvents(remoteEvents => {
       if (!isMounted) return;
-      if (remoteEvents && remoteEvents.length > 0) {
-        setVehicleEvents(remoteEvents);
-        try {
-          localStorage.setItem(`${STORAGE_KEY}_vehicle_events`, JSON.stringify(remoteEvents));
-        } catch {}
-      } else if (!isSystemZeroStateActive()) {
-        try {
-          const cached = localStorage.getItem(`${STORAGE_KEY}_vehicle_events`);
-          const toSeed = cached ? JSON.parse(cached) : INITIAL_VEHICLE_EVENTS;
-          if (Array.isArray(toSeed) && toSeed.length > 0) {
-            setVehicleEvents(toSeed);
-            saveVehicleEventsBatchToFirestore(toSeed).catch(() => {});
-          }
-        } catch {}
-      }
+      const list = remoteEvents || [];
+      setVehicleEvents(list);
+      try {
+        localStorage.setItem(`${STORAGE_KEY}_vehicle_events`, JSON.stringify(list));
+      } catch {}
     });
 
     return () => {
@@ -667,7 +600,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updated: TechnicalCostParameters = {
         ...prev,
         ...updates,
-        lastUpdated: new Date().toISOString().split('T')[0]
+        lastUpdated: todayLocalISO()
       };
       saveTechnicalParametersToFirestore(updated).catch(() => {});
       // Note: Existing historical remitos are strictly preserved and never mutated automatically
@@ -676,22 +609,16 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Technical Audit Records Actions
-  const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => {
-    const id = `AUD-${Date.now().toString().slice(-4)}`;
-    
-    let remitoId = recordInput.remitoId;
-    if (!remitoId) {
-      const existingNums = technicalAuditRecords.map(r => {
-        const match = r.remitoId.match(/#?(\d+)-2026/);
-        return match ? parseInt(match[1], 10) : 0;
-      });
-      const maxNum = existingNums.length > 0 ? Math.max(...existingNums, 379) : 379;
-      remitoId = `#${maxNum + 1}-2026`;
-    }
-
+  // Costs, suggested price and capataz commission for a remito (shared by manual entry and field app records).
+  const priceAuditRecord = (
+    recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'>,
+    id: string,
+    remitoId: string
+  ): TechnicalAuditRecord => {
     const costs = calculateAuditCosts(technicalParameters, {
       hoursWorked: recordInput.hoursWorked,
       travelHours: recordInput.travelHours,
+      viajes: recordInput.viajes,
       distanceKm: recordInput.distanceKm,
       isGuardia: recordInput.isGuardia,
       guardiaType: recordInput.guardiaType,
@@ -738,12 +665,15 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? recordInput.capatazProfit
           : (capatazCommissionPct !== undefined ? calculateCapatazProfit(costs.laborDirectCost, capatazCommissionPct) : undefined));
 
-    const newRecord: TechnicalAuditRecord = {
+    return {
       ...recordInput,
       id,
       remitoId,
       semaforo: effectiveSemaforo,
       logisticsCost: costs.logisticsCost,
+      fuelCost: recordInput.fuelCost ?? costs.fuelCost,
+      seguroCost: recordInput.seguroCost ?? costs.seguroCost,
+      amortizacionCost: recordInput.amortizacionCost ?? costs.amortizacionCost,
       laborDirectCost: costs.laborDirectCost,
       operatingCost: costs.operatingCost,
       techPay: costs.techPay,
@@ -754,6 +684,61 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       capatazCommissionPct,
       capatazProfit
     };
+  };
+
+  // Remitos loaded from the field app arrive without amounts. Price them once an
+  // administrator's session (which can read rates and parameters) has the data loaded.
+  const pricingInFlight = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const isAdminViewer = ['SuperAdmin', 'Owner', 'Gerente', 'Admin'].includes(currentUser?.role || '');
+    if (!isAdminViewer || workers.length === 0) return;
+    const pendingRecords = technicalAuditRecords.filter(r => r.costosPendientes && !pricingInFlight.current.has(r.id));
+    if (pendingRecords.length === 0) return;
+    const priced = pendingRecords.map(rec => {
+      pricingInFlight.current.add(rec.id);
+      const materialsCost = (rec.fieldMaterials || []).reduce((acc, m) => {
+        const match = materials.find(x => x.name.toLowerCase() === m.name.toLowerCase());
+        return acc + (match ? match.unitPrice * m.qty : 0);
+      }, 0);
+      const { id, remitoId, ...rest } = rec;
+      return {
+        ...priceAuditRecord({ ...rest, materialsCost, billedPrice: 0, collectedPrice: 0 }, id, remitoId),
+        costosPendientes: false
+      };
+    });
+    const byId = new Map(priced.map(r => [r.id, r]));
+    setTechnicalAuditRecords(prev => prev.map(r => byId.get(r.id) || r));
+    // Write only what pricing computed: the phone may have edited or transferred the
+    // remito meanwhile, and a full copy from this session would undo that.
+    const original = new Map(pendingRecords.map(r => [r.id, r as unknown as Record<string, unknown>]));
+    const patches = priced.map(r => {
+      const before = original.get(r.id) || {};
+      const patch: Record<string, unknown> = { id: r.id, costosPendientes: false };
+      Object.entries(r).forEach(([key, value]) => {
+        if (typeof value === 'number' && value !== before[key]) patch[key] = value;
+      });
+      return patch as unknown as TechnicalAuditRecord;
+    });
+    saveAuditRecordsBatchToFirestore(patches).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [technicalAuditRecords, currentUser?.role, workers, materials, technicalParameters]);
+
+  const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => {
+    // Unique across devices: remitos may be created offline on several phones at once.
+    const id = `AUD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    
+    let remitoId = recordInput.remitoId;
+    if (!remitoId) {
+      const year = new Date().getFullYear();
+      const existingNums = technicalAuditRecords.map(r => {
+        const match = (r.remitoId || '').match(new RegExp(`#?(\\d+)-${year}`));
+        return match ? parseInt(match[1], 10) : 0;
+      });
+      const maxNum = existingNums.length > 0 ? Math.max(...existingNums, year === 2026 ? 379 : 0) : (year === 2026 ? 379 : 0);
+      remitoId = `#${maxNum + 1}-${year}`;
+    }
+
+    const newRecord = priceAuditRecord(recordInput, id, remitoId);
 
     setTechnicalAuditRecords(prev => [newRecord, ...prev]);
     saveAuditRecordToFirestore(newRecord).catch(() => {});
@@ -821,27 +806,22 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const newRecords = prev.map(item => {
         if (item.id === id) {
           const updated = { ...item, ...updates };
+          // Going back from an invoice: the remito no longer has one.
+          const leavesInvoice = (updates.status === 'Cargado' || updates.status === 'Pasado') && (item.status === 'Facturado' || item.status === 'Cobrado');
+          if (leavesInvoice && updates.numeroFactura === undefined) {
+            updated.numeroFactura = '';
+            updated.fechaFactura = '';
+          }
           if (updates.status === 'Cobrado' && !updates.collectedPrice) {
             updated.collectedPrice = updated.billedPrice;
             if (!updates.semaforo) updated.semaforo = 'verde';
           } else if (updates.status === 'Facturado' && !updates.semaforo) {
             updated.semaforo = 'naranja';
-            if (item.status === 'Pasado' && updates.billedPrice === undefined && item.billedPrice > 0) {
-              updated.billedPrice = Math.round(item.billedPrice / 1.07);
-            }
           } else if (updates.status === 'Pasado') {
             if (!updates.semaforo) updated.semaforo = 'naranja';
-            // Del facturado($) en la tabla al pasarlo a pasado se le debe agregar el 7% a ese valor
-            if (item.status !== 'Pasado' && updates.billedPrice === undefined) {
-              const currentBilled = item.billedPrice > 0 ? item.billedPrice : item.suggestedPrice;
-              updated.billedPrice = Math.round(currentBilled * 1.07);
-            }
           } else if (updates.status === 'Cargado') {
             if (updates.collectedPrice === undefined) {
               updated.collectedPrice = 0;
-            }
-            if (item.status === 'Pasado' && updates.billedPrice === undefined && item.billedPrice > 0) {
-              updated.billedPrice = Math.round(item.billedPrice / 1.07);
             }
             if (!updates.semaforo) updated.semaforo = 'rojo';
           }
@@ -957,7 +937,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         id,
         remitoId,
         remitoPapel: rec.remitoPapel,
-        date: rec.date || new Date().toISOString().split('T')[0],
+        date: rec.date || todayLocalISO(),
         clientName: rec.clientName || 'Cliente Importado',
         siteLocation: rec.siteLocation || 'Mendoza / Valle de Uco',
         workPoint: rec.workPoint || 'Pozo / Instalación',
@@ -1023,27 +1003,48 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return updatedRecords.length;
   };
 
-  const bulkPassToFacturado = async (recordIds: string[], numeroFactura: string, fechaFactura: string): Promise<number> => {
+  const bulkPassToFacturado = async (
+    recordIds: string[],
+    numeroFactura: string,
+    fechaFactura: string,
+    billing?: BillingDetailsPayload
+  ): Promise<number> => {
     if (recordIds.length === 0) return 0;
     const idSet = new Set(recordIds);
+    const targets = technicalAuditRecords.filter(r => idSet.has(r.id));
+    const baseSum = targets.reduce((acc, r) => acc + billingBase(r), 0);
 
-    let updatedRecords: TechnicalAuditRecord[] = [];
+    // One invoice covers several remitos: each keeps its share of the base, 7%, IVA and total.
+    const assigned = { base: 0, recargo: 0, iva: 0, total: 0 };
+    const updatedRecords: TechnicalAuditRecord[] = targets.map((rec, index) => {
+      const updated: TechnicalAuditRecord = {
+        ...rec,
+        status: 'Facturado',
+        semaforo: 'naranja',
+        numeroFactura,
+        fechaFactura,
+        billedPrice: billingBase(rec)
+      };
+      if (!billing) return updated;
+      const isLast = index === targets.length - 1;
+      const share = baseSum > 0 ? billingBase(rec) / baseSum : 1 / targets.length;
+      const portion = (total: number, done: number) => (isLast ? roundCurrency(total - done) : roundCurrency(total * share));
+      updated.montoBaseRemito = portion(billing.montoBaseRemitos, assigned.base);
+      updated.recargo7Pct = portion(billing.recargo7Pct, assigned.recargo);
+      updated.ivaPct = billing.ivaPct;
+      updated.ivaAmount = portion(billing.ivaAmount, assigned.iva);
+      updated.totalFacturado = portion(billing.totalFacturado, assigned.total);
+      updated.billedPrice = updated.montoBaseRemito;
+      assigned.base += updated.montoBaseRemito;
+      assigned.recargo += updated.recargo7Pct;
+      assigned.iva += updated.ivaAmount;
+      assigned.total += updated.totalFacturado;
+      return updated;
+    });
+
+    const byId = new Map(updatedRecords.map(r => [r.id, r]));
     setTechnicalAuditRecords(prev => {
-      const next = prev.map(rec => {
-        if (idSet.has(rec.id)) {
-          const updated: TechnicalAuditRecord = {
-            ...rec,
-            status: 'Facturado',
-            semaforo: 'naranja',
-            numeroFactura,
-            fechaFactura,
-            billedPrice: rec.billedPrice && rec.billedPrice > 0 ? rec.billedPrice : (rec.suggestedPrice || 0)
-          };
-          return updated;
-        }
-        return rec;
-      });
-      updatedRecords = next.filter(r => idSet.has(r.id));
+      const next = prev.map(rec => byId.get(rec.id) || rec);
       try {
         localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(next));
       } catch {}
@@ -1188,7 +1189,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMaterials(prev => {
       const updatedList = prev.map(m => {
         if (m.id === id) {
-          const updated = { ...m, stock: Math.max(0, newStock), lastUpdated: new Date().toISOString().split('T')[0] };
+          const updated = { ...m, stock: Math.max(0, newStock), lastUpdated: todayLocalISO() };
           saveMaterialToFirestore(updated).catch(() => {});
           return updated;
         }
@@ -1206,7 +1207,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const newMaterial: MaterialItem = {
       ...material,
       id,
-      lastUpdated: new Date().toISOString().split('T')[0]
+      lastUpdated: todayLocalISO()
     };
     setMaterials(prev => {
       const updated = [newMaterial, ...prev];
@@ -1232,7 +1233,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         unitPrice: Number(m.unitPrice) ?? 0,
         location: m.location?.trim() || 'Depósito Central',
         tenantId: m.tenantId || 'tenant_bandiera_hq',
-        lastUpdated: m.lastUpdated || new Date().toISOString().split('T')[0]
+        lastUpdated: m.lastUpdated || todayLocalISO()
       }));
 
     setMaterials(prev => {
@@ -1257,7 +1258,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
               id: existing.id,
               stock: item.stock !== undefined ? item.stock : updated[idx].stock,
               unitPrice: item.unitPrice > 0 ? item.unitPrice : updated[idx].unitPrice,
-              lastUpdated: new Date().toISOString().split('T')[0]
+              lastUpdated: todayLocalISO()
             };
             updated[idx] = merged;
             saveMaterialToFirestore(merged).catch(() => {});
@@ -1659,7 +1660,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           vin: v.vin?.trim() || '',
           color: v.color?.trim() || '',
           assignedDriver: v.assignedDriver?.trim() || '',
-          purchaseDate: v.purchaseDate || new Date().toISOString().slice(0, 10),
+          purchaseDate: v.purchaseDate || todayLocalISO(),
           purchasePrice: Number(v.purchasePrice) || 0,
           residualValue: Number(v.residualValue) || 0,
           usefulLifeKm: Number(v.usefulLifeKm) || 300000,

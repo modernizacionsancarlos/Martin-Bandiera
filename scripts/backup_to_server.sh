@@ -56,6 +56,8 @@ tar --exclude='node_modules' \
     --exclude='.cache' \
     --exclude='*.log' \
     --exclude='.DS_Store' \
+    --exclude='.env*' \
+    --exclude='CREDENCIALES_LOCAL.txt' \
     -czf "${TEMP_BACKUP_PATH}" \
     -C "${PROJECT_DIR}" .
 

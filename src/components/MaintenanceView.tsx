@@ -21,6 +21,7 @@ import { useTheme } from '../context/ThemeContext';
 import { MaintenanceServiceItem } from '../types';
 import { formatCurrency } from '../utils/exportUtils';
 import { FieldReportModal } from './FieldReportModal';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export const MaintenanceView: React.FC = () => {
   const { maintenanceServices, addMaintenanceService, updateMaintenanceService, deleteMaintenanceService } = useData();
@@ -66,7 +67,7 @@ export const MaintenanceView: React.FC = () => {
       priority,
       status: 'Pendiente',
       assignedTech,
-      scheduledDate: new Date().toISOString().split('T')[0],
+      scheduledDate: todayLocalISO(),
       estimatedCost: Number(estimatedCost) || 0,
       actualCost: 0,
       billedAmount: Number(billedAmount) || 0,

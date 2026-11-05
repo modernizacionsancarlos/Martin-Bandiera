@@ -1,8 +1,54 @@
 @import "tailwindcss";
 
+/* dark: follows the .dark class set by ThemeContext, not the OS setting */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  /* Native date/number inputs have a large intrinsic width that overflows small phones. */
+  input,
+  select,
+  textarea {
+    min-width: 0;
+  }
   body {
+    @apply bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100;
     font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  }
+}
+
+/* Android app: Capacitor draws edge-to-edge, so keep content clear of the status and navigation bars. */
+html.cap-native body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  -webkit-tap-highlight-color: transparent;
+}
+html.cap-native .fixed.top-0,
+html.cap-native .sticky.top-0 {
+  top: env(safe-area-inset-top, 0px);
+}
+html.cap-native .fixed.inset-0 {
+  top: env(safe-area-inset-top, 0px);
+  bottom: env(safe-area-inset-bottom, 0px);
+}
+html.cap-native .h-screen {
+  height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+}
+html.cap-native .min-h-screen {
+  min-height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+}
+
+/* Inputs under 16px make Android/iOS zoom the page on focus. */
+@media (max-width: 640px) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 }
 

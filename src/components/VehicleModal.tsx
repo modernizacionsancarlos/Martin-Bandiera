@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Truck, DollarSign, Gauge, Shield, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { VehicleItem, VehicleCategory, VehicleStatus } from '../types';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface VehicleModalProps {
   isOpen: boolean;
@@ -54,7 +55,7 @@ export const VehicleModal: React.FC<VehicleModalProps> = ({
   const [avgConsumptionL100Km, setAvgConsumptionL100Km] = useState<number>(11);
 
   // Parámetros de Amortización
-  const [purchaseDate, setPurchaseDate] = useState(new Date().toISOString().slice(0, 10));
+  const [purchaseDate, setPurchaseDate] = useState(todayLocalISO());
   const [purchasePrice, setPurchasePrice] = useState<number>(35000000);
   const [residualValue, setResidualValue] = useState<number>(10000000);
   const [usefulLifeKm, setUsefulLifeKm] = useState<number>(300000);
@@ -84,7 +85,7 @@ export const VehicleModal: React.FC<VehicleModalProps> = ({
       setColor(initialVehicle.color || '');
       setFuelType((initialVehicle.fuelType as any) || 'Infinia Diesel / Grado 3');
       setAvgConsumptionL100Km(initialVehicle.avgConsumptionL100Km || 11);
-      setPurchaseDate(initialVehicle.purchaseDate || new Date().toISOString().slice(0, 10));
+      setPurchaseDate(initialVehicle.purchaseDate || todayLocalISO());
       setPurchasePrice(initialVehicle.purchasePrice || 0);
       setResidualValue(initialVehicle.residualValue || 0);
       setUsefulLifeKm(initialVehicle.usefulLifeKm || 300000);
@@ -110,7 +111,7 @@ export const VehicleModal: React.FC<VehicleModalProps> = ({
       setColor('');
       setFuelType('Infinia Diesel / Grado 3');
       setAvgConsumptionL100Km(11);
-      setPurchaseDate(new Date().toISOString().slice(0, 10));
+      setPurchaseDate(todayLocalISO());
       setPurchasePrice(35000000);
       setResidualValue(10000000);
       setUsefulLifeKm(300000);

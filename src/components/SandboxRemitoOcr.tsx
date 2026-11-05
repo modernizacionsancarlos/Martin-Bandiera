@@ -1,3 +1,4 @@
+import { apiUrl } from '../native/platform';
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   Sparkles,
@@ -36,6 +37,8 @@ import {
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { TeamMemberAssigned, TechnicalAuditRecord, GuardiaType } from '../types';
+import { supabase } from '../services/supabase';
+import { shrinkImageForUpload } from '../utils/imageUtils';
 import { calculateAuditCosts, formatCurrency, roundCurrency } from '../utils/calculationUtils';
 import {
   connectGoogleDrive,
@@ -50,6 +53,7 @@ import {
   DriveFolderItem,
   DriveFileItem
 } from '../services/googleDriveService';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface ExtractedRemitoData {
   remitoPapel?: string;
@@ -99,7 +103,7 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
 
   // Form states populated by AI (and user editable)
   const [remitoPapel, setRemitoPapel] = useState<string>('');
-  const [fecha, setFecha] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [fecha, setFecha] = useState<string>(todayLocalISO());
   const [cliente, setCliente] = useState<string>('');
   const [ubicacion, setUbicacion] = useState<string>('');
   const [puntoTrabajo, setPuntoTrabajo] = useState<string>('');
@@ -429,12 +433,17 @@ export const SandboxRemitoOcr: React.FC<SandboxRemitoOcrProps> = ({
     setScanStep(retryCount > 0 ? `Reintentando lectura con IA (intento ${retryCount + 1}/3)...` : 'Analizando caligrafía manuscrita con Gemini Vision...');
 
     try {
-      const response = await fetch('/api/ai/scan-remito', {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+      if (!accessToken) throw new Error('Su sesión expiró. Vuelva a iniciar sesión.');
+      const upload = await shrinkImageForUpload(imgData, mime);
+
+      const response = await fetch(apiUrl('/api/ai/scan-remito'), {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
-          image: imgData,
-          mimeType: mime,
+          image: upload.data,
+          mimeType: upload.mimeType,
           knownClients: clientNamesList,
           knownWorkers: workerNamesList
         })

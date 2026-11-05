@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Database, Download, Upload, RefreshCw, CheckCircle2, AlertTriangle, ShieldCheck, FileJson, Server, BookmarkCheck, RotateCcw, Clock, Shield } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export const MasterBackupView: React.FC = () => {
   const {
@@ -168,7 +169,7 @@ export const MasterBackupView: React.FC = () => {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(masterData, null, 2));
     const downloadAnchor = document.createElement('a');
     downloadAnchor.setAttribute('href', dataStr);
-    downloadAnchor.setAttribute('download', `Punto_Restauracion_Bandiera_${new Date().toISOString().split('T')[0]}.json`);
+    downloadAnchor.setAttribute('download', `Punto_Restauracion_Bandiera_${todayLocalISO()}.json`);
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();

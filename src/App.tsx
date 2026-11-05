@@ -3,12 +3,16 @@ import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { DataProvider } from './context/DataContext';
 import { LoginPage } from './components/LoginPage';
+import { SyncErrorToast } from './components/SyncErrorToast';
+import { SyncStatusBadge } from './components/SyncStatusBadge';
+import { FieldShell } from './components/FieldShell';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { FacturadoView } from './components/FacturadoView';
 import { PasadoView } from './components/PasadoView';
 import { CobradoView } from './components/CobradoView';
 import { ArchivoComprobantesView } from './components/ArchivoComprobantesView';
+import { TrashView } from './components/TrashView';
 import { ClientesView } from './components/ClientesView';
 import { FixedCostBanner } from './components/FixedCostBanner';
 import { TechnicalAuditTable } from './components/TechnicalAuditTable';
@@ -65,7 +69,7 @@ const AccessDeniedNotice: React.FC<AccessDeniedNoticeProps> = ({
 );
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, currentUser, permissions } = useAuth();
+  const { isAuthenticated, currentUser, permissions, authReady } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [showFieldReportModal, setShowFieldReportModal] = useState(false);
@@ -94,9 +98,19 @@ const AppContent: React.FC = () => {
     }
   }, [isAuthenticated, currentUser, permissions.viewDashboard, permissions.manageAudits, permissions.manageProjects, permissions.manageBilling, permissions.manageLiquidations, permissions.manageMaterials, activeTab]);
 
+  // Wait for the stored Supabase session to resolve before deciding
+  if (!authReady) {
+    return <div className="min-h-screen bg-slate-950" />;
+  }
+
   // Authentication gate: if user is not authenticated, show LoginPage
   if (!isAuthenticated || !currentUser) {
     return <LoginPage />;
+  }
+
+  // Field staff only load remitos: no menus, no amounts, no accounting.
+  if (currentUser.role === 'Capataz' || currentUser.role === 'Empleado') {
+    return <FieldShell />;
   }
 
   const handleNavigate = (tab: string) => {
@@ -301,6 +315,19 @@ const AppContent: React.FC = () => {
             ) : (
               <AccessDeniedNotice
                 moduleName="Gestión de Trabajos Cobrados"
+                userRole={currentUser.role}
+                onReturn={() => setActiveTab(getFallbackTab())}
+              />
+            )
+          )}
+
+          {/* SOLAPA: PAPELERA */}
+          {activeTab === 'papelera' && (
+            (permissions.manageCollections || permissions.manageBilling) ? (
+              <TrashView />
+            ) : (
+              <AccessDeniedNotice
+                moduleName="Papelera"
                 userRole={currentUser.role}
                 onReturn={() => setActiveTab(getFallbackTab())}
               />
@@ -546,6 +573,8 @@ export default function App() {
       <AuthProvider>
         <DataProvider>
           <AppContent />
+          <SyncErrorToast />
+          <SyncStatusBadge />
         </DataProvider>
       </AuthProvider>
     </ThemeProvider>

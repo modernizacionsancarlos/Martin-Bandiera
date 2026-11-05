@@ -312,7 +312,7 @@ export const PasadoView: React.FC = () => {
           </div>
 
           {/* Quick Selection Actions */}
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               onClick={() => exportPasadosToExcel(filteredRecords)}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white transition-all cursor-pointer shadow-xs whitespace-nowrap"

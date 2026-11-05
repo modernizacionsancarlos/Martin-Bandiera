@@ -16,7 +16,8 @@ import {
   Plus,
   FileSpreadsheet,
   FileText,
-  FolderArchive
+  FolderArchive,
+  Trash2
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -36,6 +37,7 @@ import { FacturadoView } from './FacturadoView';
 import { PasadoView } from './PasadoView';
 import { CobradoView } from './CobradoView';
 import { ArchivoComprobantesView } from './ArchivoComprobantesView';
+import { TrashView } from './TrashView';
 import { ExcelImportModal } from './ExcelImportModal';
 import { UserManagementView } from './UserManagementView';
 import { AdminOperativaHeader } from './AdminOperativaHeader';
@@ -50,6 +52,7 @@ type AdminTab =
   | 'pasado'
   | 'cobrado'
   | 'archivo'
+  | 'papelera'
   | 'liquidacion'
   | 'costos'
   | 'respaldo'
@@ -83,6 +86,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onOpenFirebaseModal }) => 
     { id: 'pasado', label: 'PASADO', icon: FileText },
     { id: 'cobrado', label: 'COBRADO', icon: CheckCircle2 },
     { id: 'archivo', label: 'ARCHIVO', icon: FolderArchive },
+    { id: 'papelera', label: 'PAPELERA', icon: Trash2 },
     { id: 'liquidacion', label: 'LIQUIDACIÓN EMPLEADOS', icon: Users },
     { id: 'costos', label: 'COSTOS FIJOS', icon: Sliders },
     { id: 'respaldo', label: 'RESPALDO MAESTRO', icon: Database },
@@ -154,6 +158,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ onOpenFirebaseModal }) => 
       )}
 
       {/* TAB 2: LIQUIDACIÓN EMPLEADOS */}
+      {activeTab === 'papelera' && <TrashView />}
+
       {activeTab === 'liquidacion' && (
         <LiquidationEmployeesView />
       )}

@@ -28,6 +28,7 @@ import { useAuth } from '../context/AuthContext';
 import { calculateAuditCosts, formatCurrency } from '../utils/calculationUtils';
 import { TeamMemberAssigned, TechnicalAuditRecord } from '../types';
 import { SandboxRemitoOcr } from './SandboxRemitoOcr';
+import { todayLocalISO } from '../utils/dateUtils';
 
 const SANDBOX_STORAGE_KEY = 'job_martin_bandiera_sandbox_records_v1';
 
@@ -93,7 +94,7 @@ export const SandboxView: React.FC = () => {
         id: 'sandbox-1',
         remitoId: 'TEST-#901-2026',
         remitoPapel: '0001-0004523',
-        date: new Date().toISOString().split('T')[0],
+        date: todayLocalISO(),
         clientName: 'FINCA LA CONSULTA (TEST)',
         siteLocation: 'SAN CARLOS, VALLE DE UCO',
         workPoint: 'POZO Nº 4 - TABLERO PRINCIPAL',
@@ -215,7 +216,7 @@ export const SandboxView: React.FC = () => {
       id: `sandbox-${Date.now()}`,
       remitoId: `TEST-#${nextNum}-2026`,
       remitoPapel: testRemitoPapel.trim() || undefined,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalISO(),
       clientName: testClientName,
       siteLocation: testLocation,
       workPoint: testWorkPoint,

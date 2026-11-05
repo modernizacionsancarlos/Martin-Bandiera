@@ -101,7 +101,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     manageUsers: false,
     resetSystem: false,
     exportExcel: false,
-    createRemito: false,
+    createRemito: true,    // Carga remitos en campo desde la app Android
   }
 };
 
@@ -225,22 +225,16 @@ export function getEffectivePermissions(user?: UserProfile | null): RolePermissi
   if (!user) {
     return { ...EMPTY_PERMISSIONS };
   }
-  const cleanEmail = (user.email || '').toLowerCase().trim();
 
   // SuperAdmin ALWAYS has 100% of all permissions unconditionally.
   // No customPermissions or role downgrade can ever remove SuperAdmin capabilities.
-  if (
-    user.role === 'SuperAdmin' ||
-    ['admin@admin.com', 'admin@bandiera.com', 'valenkoreinmolina@gmail.com', 'martin@iipsa.com.ar'].includes(cleanEmail)
-  ) {
+  // Role comes from the server-side account (app_roles); never grant by email.
+  if (user.role === 'SuperAdmin') {
     return { ...DEFAULT_ROLE_PERMISSIONS.SuperAdmin };
   }
 
   // Admin users (Gastón Villalobos, Romina, etc.) ALWAYS have full operational admin permissions including fixed costs
-  if (
-    user.role === 'Admin' ||
-    ['gastonvillalobos2019@gmail.com', 'rominabromeo@yahoo.com.ar'].includes(cleanEmail)
-  ) {
+  if (user.role === 'Admin') {
     const adminBase: RolePermissions = {
       ...DEFAULT_ROLE_PERMISSIONS.Admin,
       manageFixedCosts: true,

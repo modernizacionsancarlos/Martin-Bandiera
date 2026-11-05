@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext';
 
 export const UserProfileView: React.FC = () => {
   const { currentUser, isSuperAdmin } = useAuth();
-  const { theme, isDarkMode } = useTheme();
+  const { colorTheme, darkMode } = useTheme();
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -85,7 +85,7 @@ export const UserProfileView: React.FC = () => {
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Tema Activo:</span>
-                <span className="font-bold capitalize">{theme} ({isDarkMode ? 'Modo Oscuro' : 'Modo Claro'})</span>
+                <span className="font-bold capitalize">{colorTheme} ({darkMode ?'Modo Oscuro' : 'Modo Claro'})</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Versión:</span>

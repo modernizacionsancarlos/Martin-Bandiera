@@ -244,7 +244,8 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     return Array.from(new Set(selectedRecordsList.map(r => r.clientName).filter(Boolean)));
   }, [selectedRecordsList]);
 
-  const selectedTotalServicios = useMemo(() => {
+  // The remito price already includes materials: Serv + Mat = total of the selection.
+  const selectedTotalFinal = useMemo(() => {
     return roundCurrency(
       selectedRecordsList.reduce(
         (sum, r) => sum + ((r.billedPrice > 0 ? r.billedPrice : (r.suggestedPrice || r.laborDirectCost || 0)) || 0),
@@ -262,9 +263,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     );
   }, [selectedRecordsList]);
 
-  const selectedTotalFinal = useMemo(() => {
-    return roundCurrency(selectedTotalServicios + selectedTotalMateriales);
-  }, [selectedTotalServicios, selectedTotalMateriales]);
+  const selectedTotalServicios = roundCurrency(Math.max(0, selectedTotalFinal - selectedTotalMateriales));
 
   // Active color picker popover id
   const [activePickerId, setActivePickerId] = useState<string | null>(null);
@@ -331,6 +330,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
 
   // Payment Modal state for Cobrado
   const [paymentRecord, setPaymentRecord] = useState<TechnicalAuditRecord | null>(null);
+  const [paymentRecords, setPaymentRecords] = useState<TechnicalAuditRecord[]>([]);
 
   // Full Edit Mode (FieldReportModal with recordToEdit)
   const [recordToEdit, setRecordToEdit] = useState<TechnicalAuditRecord | null>(null);
@@ -646,9 +646,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     }
 
     if (newStatus === 'Pasado') {
-      const basePrice = record.billedPrice > 0 ? record.billedPrice : record.suggestedPrice;
-      const updatedPrice = record.status !== 'Pasado' ? Math.round(basePrice * 1.07) : basePrice;
-      updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja', billedPrice: updatedPrice });
+      updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja' });
       return;
     }
 
@@ -678,12 +676,8 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
   const calculateNewBilledPrice = (record: TechnicalAuditRecord, newOperatingCost: number) => {
     const marginPct = getRecordMarginPercentage(record);
     const suggested = roundCurrency(newOperatingCost * (1 + marginPct / 100));
-    let finalBilled = suggested;
-    if (record.status === 'Pasado') {
-      finalBilled = roundCurrency(suggested * 1.07);
-    }
     return {
-      billedPrice: finalBilled,
+      billedPrice: suggested,
       suggestedPrice: suggested,
       marginPercentage: marginPct
     };
@@ -1792,6 +1786,26 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                           }`}>
                             {record.remitoId}
                           </span>
+                          {record.transferido && record.transferencias?.length ? (
+                            <span
+                              className={`block mt-1 w-fit px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                                isColoredRow ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300'
+                              }`}
+                              title={record.transferencias.map(t => `${t.de} → ${t.a}${t.nota ? ` (${t.nota})` : ''}`).join('\n')}
+                            >
+                              Transferido a {record.asignadoNombre || record.transferencias[record.transferencias.length - 1].a}
+                            </span>
+                          ) : null}
+                          {record.editadoEnCampo && (
+                            <span
+                              className={`block mt-1 w-fit px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                                isColoredRow ? 'bg-white/20 text-white' : 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300'
+                              }`}
+                              title={`Editado en campo por ${record.editadoPor || 'capataz'}`}
+                            >
+                              Editado en campo
+                            </span>
+                          )}
                         </td>
                       )}
 
@@ -2550,8 +2564,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
             <button
               type="button"
               onClick={() => {
-                const firstSel = technicalAuditRecords.find(r => selectedRecordIds.includes(r.id));
-                if (firstSel) setPaymentRecord(firstSel);
+                setPaymentRecords(selectedRecordsList.filter(r => r.status !== 'Cobrado'));
               }}
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-xs cursor-pointer"
               title="Registrar cobro de remitos"
@@ -2591,6 +2604,29 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {(selectedRecord.transferencias?.length || selectedRecord.editadoEnCampo) && (
+              <div className="p-3 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-900 text-xs space-y-1.5">
+                <span className="block text-[10px] font-black uppercase tracking-wider text-violet-700 dark:text-violet-300">Historial de campo</span>
+                {selectedRecord.cargadoPorNombre && (
+                  <p className="text-slate-700 dark:text-slate-200">Cargado por <strong>{selectedRecord.cargadoPorNombre}</strong></p>
+                )}
+                {(selectedRecord.transferencias || []).map((t, i) => (
+                  <p key={i} className="text-slate-700 dark:text-slate-200">
+                    {new Date(t.fecha).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}: transferido de <strong>{t.de}</strong> a{' '}
+                    <strong>{t.a}</strong>
+                    {t.nota ? <span className="block text-slate-500 dark:text-slate-400 italic">"{t.nota}"</span> : null}
+                  </p>
+                ))}
+                {selectedRecord.editadoEnCampo && (
+                  <p className="text-slate-700 dark:text-slate-200">
+                    Última edición en campo: {new Date(selectedRecord.editadoEnCampo).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}
+                    {selectedRecord.editadoPor ? ` por ${selectedRecord.editadoPor}` : ''}
+                    {selectedRecord.edicionesCampo ? ` (${selectedRecord.edicionesCampo} ${selectedRecord.edicionesCampo === 1 ? 'edición' : 'ediciones'})` : ''}
+                  </p>
+                )}
+              </div>
+            )}
 
             <div className="grid grid-cols-2 gap-3 text-xs">
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60">
@@ -2766,12 +2802,18 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       )}
 
       {/* Payment / Cobrado Modal */}
-      {paymentRecord && (
+      {(paymentRecord || paymentRecords.length > 0) && (
         <PaymentModal
-          isOpen={!!paymentRecord}
-          onClose={() => setPaymentRecord(null)}
-          records={[paymentRecord]}
-          onSuccess={() => setPaymentRecord(null)}
+          isOpen
+          onClose={() => {
+            setPaymentRecord(null);
+            setPaymentRecords([]);
+          }}
+          records={paymentRecord ? [paymentRecord] : paymentRecords}
+          onSuccess={() => {
+            setPaymentRecord(null);
+            setPaymentRecords([]);
+          }}
         />
       )}
 
@@ -2794,6 +2836,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
           }}
           record={facturarRecord}
           records={facturarRecords}
+          allRecords={technicalAuditRecords}
           onConfirm={async (recordIds, num, date, billing) => {
             await bulkPassToFacturado(recordIds, num, date, billing);
             setToastMessage(

@@ -2,6 +2,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { FinancialMetricRecord } from '../types';
+import { todayLocalISO } from './dateUtils';
 
 export const formatCurrency = (amount: number): string => {
   return new Intl.NumberFormat('es-AR', {
@@ -158,7 +159,7 @@ export const exportFinancialReportToPDF = (
     }
   });
 
-  doc.save(`JOB_Martin_Bandiera_Reporte_Financiero_${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`JOB_Martin_Bandiera_Reporte_Financiero_${todayLocalISO()}.pdf`);
 };
 
 export const exportFinancialReportToExcel = (
@@ -218,7 +219,7 @@ export const exportFinancialReportToExcel = (
   const summaryData = [
     { 'MÉTRICA CLAVE': 'Empresa', 'VALOR': 'JOB Martin Bandiera S.A.' },
     { 'MÉTRICA CLAVE': 'Generado por', 'VALOR': meta.userName || 'Martin Bandiera' },
-    { 'MÉTRICA CLAVE': 'Fecha de Exportación', 'VALOR': new Date().toISOString().split('T')[0] },
+    { 'MÉTRICA CLAVE': 'Fecha de Exportación', 'VALOR': todayLocalISO() },
     { 'MÉTRICA CLAVE': 'Cantidad de Registros', 'VALOR': reports.length },
     { 'MÉTRICA CLAVE': 'Total Cargado (ARS)', 'VALOR': totalCargado },
     { 'MÉTRICA CLAVE': 'Total Facturado (ARS)', 'VALOR': totalFacturado },
@@ -231,5 +232,5 @@ export const exportFinancialReportToExcel = (
   wsSummary['!cols'] = [{ wch: 32 }, { wch: 32 }];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Resumen Ejecutivo');
 
-  XLSX.writeFile(wb, `JOB_Martin_Bandiera_Metricas_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  XLSX.writeFile(wb, `JOB_Martin_Bandiera_Metricas_${todayLocalISO()}.xlsx`);
 };

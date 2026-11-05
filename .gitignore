@@ -6,3 +6,18 @@ coverage/
 *.log
 .env*
 !.env.example
+
+CREDENCIALES_LOCAL.txt
+.vercel
+scripts/migration_summary.json
+
+.vercel
+.env*
+
+# Android signing
+android/keystore.properties
+*.jks
+*.keystore
+
+*.apk
+*.aab

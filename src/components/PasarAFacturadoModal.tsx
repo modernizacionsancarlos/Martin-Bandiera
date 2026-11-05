@@ -14,12 +14,13 @@ import {
 } from 'lucide-react';
 import { TechnicalAuditRecord } from '../types';
 import { formatCurrency, roundCurrency } from '../utils/calculationUtils';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export interface BillingDetailsPayload {
   montoBaseRemitos: number;
   recargo7Pct: number;
   subtotalNeto: number;
-  ivaPct: 21 | 10.5;
+  ivaPct: 21 | 10.5 | 0;
   ivaAmount: number;
   totalFacturado: number;
 }
@@ -30,6 +31,8 @@ interface PasarAFacturadoModalProps {
   record?: TechnicalAuditRecord | null;
   records?: TechnicalAuditRecord[];
   availableRecords?: TechnicalAuditRecord[];
+  // Every remito in the system, to detect an invoice number already used by another client.
+  allRecords?: TechnicalAuditRecord[];
   onConfirm: (
     recordIds: string[],
     numeroFactura: string,
@@ -38,17 +41,33 @@ interface PasarAFacturadoModalProps {
   ) => void;
 }
 
+const isAlreadyBilled = (r: TechnicalAuditRecord) => r.status === 'Facturado' || r.status === 'Cobrado';
+
+export const SIN_FACTURA = 'SIN FACTURA';
+
+export const isSinFactura = (r: TechnicalAuditRecord) => {
+  const num = (r.numeroFactura || '').trim().toUpperCase();
+  return !num || num === SIN_FACTURA;
+};
+
+// Remito amount before any invoice charge: the 7% is added only when invoicing.
+export const billingBase = (r: TechnicalAuditRecord): number => r.billedPrice || r.suggestedPrice || 0;
+
 export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
   isOpen,
   onClose,
   record,
   records,
   availableRecords,
+  allRecords,
   onConfirm
 }) => {
-  const [selectedRecordId, setSelectedRecordId] = useState<string>('');
+  const [pickedIds, setPickedIds] = useState<string[]>([]);
+  const [pickClient, setPickClient] = useState<string>('');
+  const [invoiceConflictOk, setInvoiceConflictOk] = useState(false);
+  const [sinFactura, setSinFactura] = useState(false);
   const [numeroFactura, setNumeroFactura] = useState<string>('');
-  const [fechaFactura, setFechaFactura] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [fechaFactura, setFechaFactura] = useState<string>(todayLocalISO());
   
   // Facturación: base editable, 7% recargo, IVA 21 o 10.5, total editable
   const [editableBaseAmount, setEditableBaseAmount] = useState<number>(0);
@@ -62,76 +81,81 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
   // Safe fallback for availableRecords to avoid recreating array references on every render
   const safeAvailableRecords = useMemo(() => availableRecords || [], [availableRecords]);
 
-  // Active records to process
+  const hasFixedTarget = !!record || (!!records && records.length > 0);
+
+  // Opened from the Facturado tab: remitos are picked here, newest first.
+  const pickableClients = useMemo(
+    () => Array.from(new Set(safeAvailableRecords.map(r => r.clientName).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b)),
+    [safeAvailableRecords]
+  );
+  const pickableRecords = useMemo(
+    () =>
+      safeAvailableRecords
+        .filter(r => r.clientName === pickClient)
+        .sort((a, b) => (b.date || '').localeCompare(a.date || '')),
+    [safeAvailableRecords, pickClient]
+  );
+
+  // Active records to process. Remitos already invoiced stay out of the new invoice and its total.
   const effectiveRecords = useMemo(() => {
-    if (records && records.length > 0) return records;
+    if (records && records.length > 0) return records.filter(r => !isAlreadyBilled(r));
     if (record) return [record];
-    if (selectedRecordId) {
-      const found = safeAvailableRecords.find(r => r.id === selectedRecordId);
-      return found ? [found] : [];
-    }
-    if (safeAvailableRecords.length > 0) return [safeAvailableRecords[0]];
-    return [];
-  }, [record, records, safeAvailableRecords, selectedRecordId]);
+    return pickableRecords.filter(r => pickedIds.includes(r.id));
+  }, [record, records, pickableRecords, pickedIds]);
+
+  const excludedRecords = useMemo(() => (records || []).filter(isAlreadyBilled), [records]);
+  const zeroAmountCount = effectiveRecords.filter(r => billingBase(r) <= 0).length;
 
   const isMulti = effectiveRecords.length > 1;
 
   // Calculate default original sum from records
   const originalSum = useMemo(() => {
-    return effectiveRecords.reduce((acc, r) => acc + (r.billedPrice || r.suggestedPrice || 0), 0);
+    return roundCurrency(effectiveRecords.reduce((acc, r) => acc + billingBase(r), 0));
   }, [effectiveRecords]);
 
   // Stable identifier of which records are selected to avoid re-running effect on every render
   const recordsKey = useMemo(() => {
-    if (records && records.length > 0) return records.map(r => r.id).sort().join(',');
-    if (record) return record.id;
-    return selectedRecordId || (safeAvailableRecords[0]?.id || 'none');
-  }, [record, records, selectedRecordId, safeAvailableRecords]);
+    return effectiveRecords.map(r => r.id).sort().join(',') || 'none';
+  }, [effectiveRecords]);
 
   // Initialize ONLY when modal opens or when target record(s) change
   useEffect(() => {
     if (!isOpen) return;
 
-    if (records && records.length > 0) {
-      const existingInvoice = records.find(r => r.numeroFactura)?.numeroFactura || '';
-      const existingDate = records.find(r => r.fechaFactura)?.fechaFactura || new Date().toISOString().split('T')[0];
-      setNumeroFactura(existingInvoice);
-      setFechaFactura(existingDate);
-    } else if (record) {
-      setSelectedRecordId(record.id);
-      setNumeroFactura(record.numeroFactura || '');
-      setFechaFactura(record.fechaFactura || new Date().toISOString().split('T')[0]);
-    } else if (safeAvailableRecords.length > 0) {
-      const active = safeAvailableRecords.find(r => r.id === selectedRecordId) || safeAvailableRecords[0];
-      setSelectedRecordId(active.id);
-      setNumeroFactura(active.numeroFactura || '');
-      setFechaFactura(active.fechaFactura || new Date().toISOString().split('T')[0]);
-    } else {
-      setSelectedRecordId('');
-      setNumeroFactura('');
-      setFechaFactura(new Date().toISOString().split('T')[0]);
-    }
+    // Only an invoice these remitos really have: a leftover number belongs to another billing.
+    const single = record || null;
+    const keepInvoice = single && isAlreadyBilled(single);
+    const keepSinFactura = !!keepInvoice && (single.numeroFactura || '').trim().toUpperCase() === SIN_FACTURA;
+    setSinFactura(keepSinFactura);
+    setNumeroFactura(keepInvoice && !keepSinFactura ? single.numeroFactura || '' : '');
+    setFechaFactura(keepInvoice ? single.fechaFactura || todayLocalISO() : todayLocalISO());
 
     // Set base amount from records
-    const sum = effectiveRecords.reduce((acc, r) => acc + (r.billedPrice || r.suggestedPrice || 0), 0);
-    setEditableBaseAmount(sum);
+    setEditableBaseAmount(originalSum);
     setCustomTotalAmount(null);
     setIvaRate(21);
     setError(null);
+    setInvoiceConflictOk(false);
   }, [isOpen, recordsKey]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPickedIds([]);
+    setPickClient('');
+  }, [isOpen]);
 
   // Calculations for 7% and IVA
   const baseMonto = Math.max(0, editableBaseAmount || 0);
-  const recargo7Amount = roundCurrency(baseMonto * 0.07);
+  const recargo7Amount = sinFactura ? 0 : roundCurrency(baseMonto * 0.07);
   const subtotalNeto = roundCurrency(baseMonto + recargo7Amount);
-  const ivaAmount = roundCurrency(subtotalNeto * (ivaRate / 100));
+  const ivaAmount = sinFactura ? 0 : roundCurrency(subtotalNeto * (ivaRate / 100));
   const calculatedGrandTotal = roundCurrency(subtotalNeto + ivaAmount);
 
   const effectiveFinalTotal = customTotalAmount !== null ? customTotalAmount : calculatedGrandTotal;
 
   // Auto-focus and place cursor in invoice input when opened
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && hasFixedTarget) {
       const timer = setTimeout(() => {
         if (invoiceInputRef.current) {
           invoiceInputRef.current.focus();
@@ -150,13 +174,25 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
     return Array.from(new Set(effectiveRecords.map(r => r.clientName).filter(Boolean)));
   }, [effectiveRecords]);
 
+  // Invoice number already used by remitos of another client.
+  const invoiceConflict = useMemo(() => {
+    const num = numeroFactura.trim().toUpperCase();
+    if (sinFactura || !num || num === SIN_FACTURA || !allRecords) return null;
+    const ownClients = new Set(effectiveRecords.map(r => r.clientName));
+    const ownIds = new Set(effectiveRecords.map(r => r.id));
+    const other = allRecords.find(
+      r => isAlreadyBilled(r) && !ownIds.has(r.id) && (r.numeroFactura || '').trim().toUpperCase() === num && !ownClients.has(r.clientName)
+    );
+    return other || null;
+  }, [numeroFactura, allRecords, effectiveRecords, sinFactura]);
+
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const cleanInvoiceNum = numeroFactura.trim();
+    const cleanInvoiceNum = sinFactura ? SIN_FACTURA : numeroFactura.trim();
     if (!cleanInvoiceNum) {
       setError('Por favor ingrese el número de factura.');
       return;
@@ -173,11 +209,17 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
       return;
     }
 
+    if (invoiceConflict && !invoiceConflictOk) {
+      setInvoiceConflictOk(true);
+      setError(`La factura ${cleanInvoiceNum} ya está usada en ${invoiceConflict.remitoId} de ${invoiceConflict.clientName}. Revise el número. Para usarla igual, confirme de nuevo.`);
+      return;
+    }
+
     const billingPayload: BillingDetailsPayload = {
       montoBaseRemitos: baseMonto,
       recargo7Pct: recargo7Amount,
       subtotalNeto,
-      ivaPct: ivaRate,
+      ivaPct: sinFactura ? 0 : ivaRate,
       ivaAmount,
       totalFacturado: effectiveFinalTotal
     };
@@ -225,28 +267,77 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
             </div>
           )}
 
-          {/* Selector de Remito si viene sin registros */}
-          {!record && (!records || records.length === 0) && (
-            <div>
-              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
-                Seleccionar Remito Operativo
-              </label>
-              {availableRecords?.length === 0 ? (
+          {excludedRecords.length > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 font-bold text-xs">
+              {excludedRecords.length === 1 ? '1 remito ya está facturado y queda' : `${excludedRecords.length} remitos ya están facturados y quedan`} fuera de esta factura:{' '}
+              {excludedRecords.map(r => `${r.remitoId} (${r.numeroFactura || 'sin número'})`).join(', ')}
+            </div>
+          )}
+
+          {zeroAmountCount > 0 && (
+            <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 font-bold text-xs">
+              {zeroAmountCount === 1 ? '1 remito no tiene monto' : `${zeroAmountCount} remitos no tienen monto`} y suma $0. Cárguelo en Auditoría antes de facturar.
+            </div>
+          )}
+
+          {/* Selector de remitos cuando se abre sin selección previa */}
+          {!hasFixedTarget && (
+            <div className="space-y-2">
+              {safeAvailableRecords.length === 0 ? (
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800 text-slate-500 text-xs">
                   No hay remitos pendientes para facturar.
                 </div>
               ) : (
-                <select
-                  value={selectedRecordId}
-                  onChange={e => setSelectedRecordId(e.target.value)}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                >
-                  {safeAvailableRecords.map(r => (
-                    <option key={r.id} value={r.id}>
-                      {r.remitoId} {r.remitoPapel ? `(Papel: ${r.remitoPapel})` : ''} - {r.clientName} (${formatCurrency(r.billedPrice || r.suggestedPrice || 0)})
-                    </option>
-                  ))}
-                </select>
+                <>
+                  <div>
+                    <label htmlFor="billing-client" className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5">
+                      Cliente a facturar
+                    </label>
+                    <select
+                      id="billing-client"
+                      value={pickClient}
+                      onChange={e => {
+                        setPickClient(e.target.value);
+                        setPickedIds([]);
+                      }}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold text-xs cursor-pointer focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                    >
+                      <option value="">Elegir cliente…</option>
+                      {pickableClients.map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {pickClient && (
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800 max-h-44 overflow-y-auto">
+                      <label className="flex items-center gap-2 p-2.5 font-black text-slate-700 dark:text-slate-200 cursor-pointer sticky top-0 bg-white dark:bg-slate-900">
+                        <input
+                          type="checkbox"
+                          className="w-4 h-4 accent-blue-600"
+                          checked={pickedIds.length === pickableRecords.length}
+                          onChange={e => setPickedIds(e.target.checked ? pickableRecords.map(r => r.id) : [])}
+                        />
+                        Seleccionar todos ({pickableRecords.length})
+                      </label>
+                      {pickableRecords.map(r => (
+                        <label key={r.id} className="flex items-center gap-2 p-2.5 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800">
+                          <input
+                            type="checkbox"
+                            className="w-4 h-4 accent-blue-600"
+                            checked={pickedIds.includes(r.id)}
+                            onChange={e => setPickedIds(prev => (e.target.checked ? [...prev, r.id] : prev.filter(id => id !== r.id)))}
+                          />
+                          <span className="font-mono font-black text-blue-600 dark:text-blue-400">{r.remitoId}</span>
+                          <span className="flex-1 min-w-0 truncate text-slate-600 dark:text-slate-300">
+                            {(r.date || '').split('-').reverse().join('/')}
+                            {r.remitoPapel ? ` · Papel ${r.remitoPapel}` : ''}
+                          </span>
+                          <span className="font-mono font-bold text-slate-900 dark:text-white shrink-0">${formatCurrency(billingBase(r))}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -284,7 +375,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
                       <span className="text-slate-700 dark:text-slate-300 font-medium">{r.clientName}</span>
                     </div>
                     <span className="font-mono font-bold text-slate-900 dark:text-white shrink-0 ml-2">
-                      ${formatCurrency(r.billedPrice || r.suggestedPrice || 0)}
+                      ${formatCurrency(billingBase(r))}
                     </span>
                   </div>
                 ))}
@@ -315,6 +406,33 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
             </div>
           )}
 
+          {/* Con factura / Sin factura */}
+          <div className="grid grid-cols-2 gap-2.5" role="group" aria-label="Tipo de comprobante">
+            {[
+              { value: false, label: 'Con factura', hint: 'Suma 7% e IVA' },
+              { value: true, label: 'Sin factura', hint: 'Sin 7% ni IVA' }
+            ].map(opt => (
+              <button
+                key={opt.label}
+                type="button"
+                aria-pressed={sinFactura === opt.value}
+                onClick={() => {
+                  setSinFactura(opt.value);
+                  setCustomTotalAmount(null);
+                  setError(null);
+                }}
+                className={`p-2.5 rounded-xl border-2 text-left font-black transition-all cursor-pointer ${
+                  sinFactura === opt.value
+                    ? 'border-blue-600 bg-blue-50 dark:bg-blue-950/60 text-blue-900 dark:text-blue-200'
+                    : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                }`}
+              >
+                <span className="block text-xs">{opt.label}</span>
+                <span className="block text-[10px] font-normal">{opt.hint}</span>
+              </button>
+            ))}
+          </div>
+
           {/* CÁLCULO DE FACTURACIÓN: MONTO BASE EDITABLE + 7% + IVA (21% / 10.5%) */}
           <div className="p-4 rounded-2xl bg-gradient-to-br from-slate-50 to-blue-50/50 dark:from-slate-900 dark:to-blue-950/30 border-2 border-blue-200 dark:border-blue-800/80 space-y-3.5 shadow-sm">
             
@@ -324,7 +442,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
                 <span>Liquidación Fiscal de Facturación</span>
               </div>
               <span className="text-[10.5px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-900/60 px-2 py-0.5 rounded-full">
-                +7% Recargo Base + IVA
+                {sinFactura ? 'Sin 7% ni IVA' : '+7% Recargo Base + IVA'}
               </span>
             </div>
 
@@ -367,6 +485,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
               </p>
             </div>
 
+            {!sinFactura && (<>
             {/* 2. Recargo del 7% y Subtotal Neto */}
             <div className="grid grid-cols-2 gap-3 p-2.5 rounded-xl bg-blue-100/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800/60 text-xs">
               <div>
@@ -464,14 +583,18 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
               </div>
             </div>
 
+            </>)}
+
             {/* 4. TOTAL A FACTURAR (Editable) */}
             <div className="pt-2 border-t border-blue-200 dark:border-blue-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 bg-blue-600/10 dark:bg-blue-900/30 p-3 rounded-xl">
               <div>
                 <span className="text-[10.5px] uppercase font-black text-blue-900 dark:text-blue-200 block">
-                  TOTAL FINAL A FACTURAR (CON IVA)
+                  {sinFactura ? 'TOTAL SIN FACTURA' : 'TOTAL FINAL A FACTURAR (CON IVA)'}
                 </span>
                 <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                  Subtotal Neto (${formatCurrency(subtotalNeto)}) + IVA {ivaRate}% (${formatCurrency(ivaAmount)})
+                  {sinFactura
+                    ? 'Monto de los remitos, sin recargo ni IVA'
+                    : `Subtotal Neto ($${formatCurrency(subtotalNeto)}) + IVA ${ivaRate}% ($${formatCurrency(ivaAmount)})`}
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
@@ -494,7 +617,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
           </div>
 
           {/* Campo Número de Factura */}
-          <div>
+          {!sinFactura && <div>
             <label htmlFor="invoice-number-input" className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Receipt className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
@@ -510,8 +633,11 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
                 type="text"
                 placeholder="Ej: A0001-00004523 ó 4523"
                 value={numeroFactura}
-                onChange={e => setNumeroFactura(e.target.value.toUpperCase())}
-                autoFocus
+                onChange={e => {
+                  setNumeroFactura(e.target.value.toUpperCase());
+                  setInvoiceConflictOk(false);
+                }}
+                autoFocus={hasFixedTarget}
                 autoComplete="off"
                 spellCheck={false}
                 required
@@ -532,6 +658,12 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
               )}
             </div>
 
+            {invoiceConflict && (
+              <p className="mt-2 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+                Este número ya está usado en {invoiceConflict.remitoId} de {invoiceConflict.clientName}.
+              </p>
+            )}
+
             {/* Accesos rápidos de prefijos */}
             <div className="flex items-center gap-1.5 mt-2 flex-wrap">
               <span className="text-[10.5px] text-slate-400 font-medium">Prefijos rápidos:</span>
@@ -550,14 +682,14 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
                 </button>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Campo Fecha de Facturación */}
           <div>
             <label htmlFor="invoice-date-input" className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1.5 flex items-center justify-between">
               <span className="flex items-center gap-1.5">
                 <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-                Fecha de Factura *
+                {sinFactura ? 'Fecha *' : 'Fecha de Factura *'}
               </span>
               <span className="text-[10px] text-blue-600 dark:text-blue-400 font-medium">
                 Inicio cómputo días

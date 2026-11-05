@@ -260,6 +260,22 @@ export interface TechnicalAuditRecord {
   // Ganancia Capataz (calculada estrictamente sobre Costo de Servicio / M.O.)
   capatazCommissionPct?: number; // e.g. 10
   capatazProfit?: number;        // laborDirectCost * pct
+
+  // Carga desde la app de campo (sin montos): el sistema calcula los costos al abrirlo un administrador
+  origenCampo?: boolean;
+  costosPendientes?: boolean;
+  cargadoPor?: string;
+  cargadoEn?: string;
+  fieldMaterials?: { name: string; qty: number }[];
+  // Field remitos: who has it now, hand-overs between capataces and edits from the phone.
+  cargadoPorNombre?: string;
+  asignadoA?: string;
+  asignadoNombre?: string;
+  transferido?: boolean;
+  transferencias?: { de: string; a: string; fecha: string; nota?: string | null; deEmail?: string; aEmail?: string }[];
+  editadoEnCampo?: string;
+  editadoPor?: string;
+  edicionesCampo?: number;
 }
 
 export type ColorTheme = 'cyan' | 'blue' | 'emerald' | 'amber' | 'slate';

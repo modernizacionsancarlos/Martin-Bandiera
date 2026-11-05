@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { TechnicalCostParameters } from '../types';
+import { todayLocalISO } from './dateUtils';
 
 /**
  * Generates a comprehensive, multi-page professional PDF manual of the entire system.
@@ -1017,6 +1018,6 @@ export const generateSystemManualPDF = (technicalParameters?: TechnicalCostParam
   doc.text('--- Fin del Manual Oficial de Usuario · JOB Martin Bandiera ---', 105, 275, { align: 'center' });
 
   // Save/Download PDF
-  const filename = `JOB_Martin_Bandiera_Manual_de_Uso_v2026.9_${new Date().toISOString().split('T')[0]}.pdf`;
+  const filename = `JOB_Martin_Bandiera_Manual_de_Uso_v2026.9_${todayLocalISO()}.pdf`;
   doc.save(filename);
 };

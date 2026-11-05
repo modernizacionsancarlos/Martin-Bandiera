@@ -9,9 +9,10 @@ import {
   Unsubscribe,
   writeBatch,
   arrayUnion,
-  arrayRemove
-} from 'firebase/firestore';
-import { db } from './firebase';
+  arrayRemove,
+  db,
+  SYNC_ERROR_EVENT
+} from './docstore';
 import { normalizeWorkerName } from '../utils/calculationUtils';
 import {
   UserProfile,
@@ -27,6 +28,7 @@ import {
   VehicleItem,
   VehicleEventItem
 } from '../types';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export enum OperationType {
   CREATE = 'create',
@@ -45,7 +47,13 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
     return;
   }
   console.warn(`[Firestore Error] op=${operationType} path=${path}:`, message);
+  // Surface failed writes to the user instead of failing silently
+  if (operationType !== OperationType.GET && operationType !== OperationType.LIST && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SYNC_ERROR_EVENT, { detail: { operationType, path, message } }));
+  }
 }
+
+export { SYNC_ERROR_EVENT };
 
 /**
  * Deep sanitization for Firestore:
@@ -465,7 +473,7 @@ export function normalizeTechnicalAuditRecord(raw: any): TechnicalAuditRecord {
     return {
       id: `AUD-${Date.now()}`,
       remitoId: `#${Date.now()}`,
-      date: new Date().toISOString().split('T')[0],
+      date: todayLocalISO(),
       clientName: 'Cliente Sin Asignar',
       siteLocation: '',
       workPoint: '',
@@ -511,7 +519,7 @@ export function normalizeTechnicalAuditRecord(raw: any): TechnicalAuditRecord {
     id: String(raw.id || `AUD-${Date.now()}`),
     remitoId: String(raw.remitoId || raw.remitoNumber || (raw.id ? `#${raw.id}` : '#000-2026')),
     remitoPapel: raw.remitoPapel || '',
-    date: String(raw.date || new Date().toISOString().split('T')[0]),
+    date: String(raw.date || todayLocalISO()),
     clientName: String(raw.clientName || 'Cliente Sin Asignar'),
     siteLocation: String(raw.siteLocation || raw.site || ''),
     workPoint: String(raw.workPoint || raw.site || raw.description || ''),
@@ -707,7 +715,7 @@ export function normalizeMaterialItem(data: any): MaterialItem {
     unitPrice: Number(data?.unitPrice) || 0,
     location: String(data?.location || 'Depósito Central').trim(),
     tenantId: String(data?.tenantId || 'tenant_bandiera_hq'),
-    lastUpdated: data?.lastUpdated || new Date().toISOString().split('T')[0]
+    lastUpdated: data?.lastUpdated || todayLocalISO()
   };
 }
 

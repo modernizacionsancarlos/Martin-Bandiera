@@ -14,6 +14,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { VehicleEventItem, VehicleEventType, VehicleItem } from '../types';
+import { todayLocalISO } from '../utils/dateUtils';
 
 interface VehicleEventModalProps {
   isOpen: boolean;
@@ -74,7 +75,7 @@ export const VehicleEventModal: React.FC<VehicleEventModalProps> = ({
 
   const [vehicleId, setVehicleId] = useState('');
   const [type, setType] = useState<VehicleEventType>('cambio_aceite');
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayLocalISO());
   const [mileageKm, setMileageKm] = useState<number>(0);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -104,7 +105,7 @@ export const VehicleEventModal: React.FC<VehicleEventModalProps> = ({
     if (initialEvent) {
       setVehicleId(initialEvent.vehicleId);
       setType(initialEvent.type);
-      setDate(initialEvent.date || new Date().toISOString().slice(0, 10));
+      setDate(initialEvent.date || todayLocalISO());
       setMileageKm(initialEvent.mileageKm || 0);
       setTitle(initialEvent.title || '');
       setDescription(initialEvent.description || '');
@@ -130,7 +131,7 @@ export const VehicleEventModal: React.FC<VehicleEventModalProps> = ({
       const initialVehId = defaultVeh ? defaultVeh.id : '';
       setVehicleId(initialVehId);
       setType('cambio_aceite');
-      setDate(new Date().toISOString().slice(0, 10));
+      setDate(todayLocalISO());
 
       const currKm = defaultVeh?.currentMileageKm || 0;
       setMileageKm(currKm);

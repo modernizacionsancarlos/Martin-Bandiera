@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { TechnicalAuditRecord, RemitoStatus, ClientItem, MaterialItem, VehicleItem, VehicleEventItem, WorkerItem, WorkerCategory, UserRole } from '../types';
 import { roundCurrency, formatCurrency } from './calculationUtils';
+import { todayLocalISO } from './dateUtils';
 
 export interface ParsedClientRow {
   clientName: string;
@@ -39,7 +40,7 @@ export interface ExcelWorkerImportResult {
  * Format date from Excel numeric date serial or standard string
  */
 export const formatExcelDate = (val: any): string => {
-  if (!val) return new Date().toISOString().split('T')[0];
+  if (!val) return todayLocalISO();
 
   if (typeof val === 'number') {
     // Excel base date serial number to JS Date
@@ -69,7 +70,7 @@ export const formatExcelDate = (val: any): string => {
     return parsed.toISOString().split('T')[0];
   }
 
-  return new Date().toISOString().split('T')[0];
+  return todayLocalISO();
 };
 
 /**
@@ -460,7 +461,7 @@ export const exportClientesToExcel = (clients: ClientItem[]): void => {
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Clientes');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Base_Clientes_JOB_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -634,7 +635,7 @@ export const parseMaterialesExcel = async (file: File): Promise<ExcelMaterialImp
         unitPrice,
         location,
         tenantId: 'tenant_bandiera_hq',
-        lastUpdated: new Date().toISOString().split('T')[0]
+        lastUpdated: todayLocalISO()
       });
     } catch (err: any) {
       errors.push(`Fila ${index + 2}: ${err.message || 'Error al procesar material'}`);
@@ -668,7 +669,7 @@ export const exportMaterialesToExcel = (materials: MaterialItem[]): void => {
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Materiales');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Inventario_Materiales_JOB_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -788,7 +789,7 @@ export const exportRemitosToExcel = (
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Auditoria_Tecnica');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `${customName || 'Auditoria_Tecnica_Bandiera'}_${dateStr}.xlsx`);
 };
 
@@ -822,7 +823,7 @@ export const exportFacturadosToExcel = (records: TechnicalAuditRecord[]): void =
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Facturado');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Facturacion_Remitos_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -858,7 +859,7 @@ export const exportPasadosToExcel = (records: TechnicalAuditRecord[]): void => {
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Remitos_Pasados');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Remitos_Pasados_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -959,7 +960,7 @@ export const exportRemitoPasadoConsolidadoToExcel = (
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Consolidado_Pasados');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   const cleanClient = (clientName || records[0]?.clientName || 'Cliente').replace(/[^a-zA-Z0-9_-]/g, '_');
   XLSX.writeFile(wb, `Remitos_Pasados_Consolidado_${cleanClient}_${dateStr}.xlsx`);
 };
@@ -989,7 +990,7 @@ export const exportCobradosToExcel = (records: TechnicalAuditRecord[]): void => 
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Cobrados');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Cobranzas_Remitos_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -1012,7 +1013,7 @@ export const exportLiquidacionesToExcel = (liquidations: any[]): void => {
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Liquidaciones');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Liquidacion_Cuadrillas_Bandiera_${dateStr}.xlsx`);
 };
 
@@ -1338,7 +1339,7 @@ export const exportVehiclesToExcel = (
   const wsEvents = XLSX.utils.json_to_sheet(eventsData);
   XLSX.utils.book_append_sheet(wb, wsEvents, 'Historial Eventos');
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayLocalISO();
   XLSX.writeFile(wb, `Informe_Amortizacion_Flota_${today}.xlsx`);
 };
 
@@ -1445,7 +1446,7 @@ export const exportWorkersToExcel = (workers: WorkerItem[]): void => {
   const ws = XLSX.utils.json_to_sheet(exportData);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Nomina Personal');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   XLSX.writeFile(wb, `Nomina_Personal_JOB_Bandiera_${dateStr}.xlsx`);
 };
 

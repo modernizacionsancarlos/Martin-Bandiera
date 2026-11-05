@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
 import { Wrench, Plus, CheckCircle, Clock, DollarSign, FileText, CheckCircle2 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { todayLocalISO } from '../utils/dateUtils';
 
 export const ManualWorksView: React.FC = () => {
   const { addTechnicalAuditRecord } = useData();
 
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(todayLocalISO());
   const [clientName, setClientName] = useState('');
   const [workPoint, setWorkPoint] = useState('');
   const [hoursWorked, setHoursWorked] = useState(4.0);

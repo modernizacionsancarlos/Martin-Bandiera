@@ -12,6 +12,18 @@ import {
   subscribeDeletedUsers,
   unmarkUserAsDeletedInFirestore
 } from '../services/firestoreSync';
+import { supabase } from '../services/supabase';
+import { pendingWriteCount } from '../services/docstore';
+import { todayLocalISO } from '../utils/dateUtils';
+
+interface AuthAccount {
+  userId: string;
+  email: string;
+  role: UserRole;
+  profileUid: string | null;
+  // Name from the account's own users doc: field roles cannot load the users list.
+  displayName?: string;
+}
 
 export interface FirebaseConnectionConfig {
   apiKey: string;
@@ -30,9 +42,11 @@ interface AuthContextType {
   users: UserProfile[];
   availableUsers: UserProfile[];
   loginAsUser: (user: UserProfile) => void;
-  loginWithCredentials: (identifier: string, password: string) => { success: boolean; message?: string };
-  loginWithEmail: (email: string) => boolean;
+  isPreviewingOtherUser: boolean;
+  exitPreview: () => void;
+  loginWithCredentials: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
+  authReady: boolean;
   
   // User Management CRUD
   createUser: (userData: Omit<UserProfile, 'uid'> & { uid?: string }) => UserProfile;
@@ -76,19 +90,21 @@ interface AuthContextType {
 }
 
 const DEFAULT_FIREBASE_CONFIG: FirebaseConnectionConfig = {
-  apiKey: 'AIzaSyAmrAVy1sB0nw2xm-S3AfRc6uADfCEkFCU',
-  authDomain: 'future-apricot-m8chg.firebaseapp.com',
-  projectId: 'future-apricot-m8chg',
-  storageBucket: 'future-apricot-m8chg.firebasestorage.app',
-  messagingSenderId: '192820061976',
-  appId: '1:192820061976:web:3be214e8b3b11dbefda06d',
+  // Legacy panel only. Data now lives in Supabase; no Firebase keys ship to the browser.
+  apiKey: '',
+  authDomain: '',
+  projectId: 'supabase',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: '',
   connected: true,
-  statusMessage: 'Conectado a Firebase Firestore en la Nube (future-apricot-m8chg)'
+  statusMessage: 'Conectado a la base de datos en la nube (Supabase)'
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_STORAGE_KEY = 'job_martin_bandiera_auth_user_v4';
+const AUTH_ACCOUNT_CACHE_KEY = 'bandiera_auth_account_v1';
 const USERS_STORAGE_KEY = 'job_martin_bandiera_users_list_v4';
 const FIREBASE_CONFIG_KEY = 'job_martin_bandiera_firebase_config';
 export const DELETED_USERS_STORAGE_KEY = 'job_martin_bandiera_deleted_users_v1';
@@ -274,7 +290,7 @@ function loadAllPersistedUsers(): UserProfile[] {
                   ...u,
                   uid: uid,
                   email: email || prev?.email || '',
-                  password: (u.password && u.password.trim()) || (prev?.password) || '123456',
+                  password: (u.password && u.password.trim()) || (prev?.password) || '',
                   active: u.active !== undefined ? u.active : true
                 });
               }
@@ -330,7 +346,7 @@ function loadAllPersistedUsers(): UserProfile[] {
       role: 'SuperAdmin',
       category: 'Administrativo',
       isAdministrative: true,
-      password: existingMartin?.password || '123456',
+      password: existingMartin?.password || '',
       tenantId: existingMartin?.tenantId || 'tenant_bandiera_hq',
       companyName: 'JOB Martin Bandiera S.A.',
       phone: '+54 9 2622 50-5195',
@@ -352,7 +368,7 @@ function loadAllPersistedUsers(): UserProfile[] {
       role: 'Admin',
       category: 'Administrativo',
       isAdministrative: true,
-      password: existingGaston?.password || '123456',
+      password: existingGaston?.password || '',
       tenantId: existingGaston?.tenantId || 'tenant_bandiera_hq',
       companyName: 'JOB Martin Bandiera S.A.',
       phone: '+54 9 261 330-1127',
@@ -389,7 +405,7 @@ function loadAllPersistedUsers(): UserProfile[] {
       role: 'Admin',
       category: 'Administrativo',
       isAdministrative: true,
-      password: existingRomina?.password || '123456',
+      password: existingRomina?.password || '',
       tenantId: existingRomina?.tenantId || 'tenant_bandiera_hq',
       companyName: 'JOB Martin Bandiera S.A.',
       phone: '+54 9 261 411-2288',
@@ -437,139 +453,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   // 2. Current User & Authentication Status
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
-    try {
-      if (localStorage.getItem('bandiera_logged_out') === 'true') {
-        return null;
-      }
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && (parsed.uid || parsed.email)) {
-          const email = (parsed.email || '').toLowerCase().trim();
-          if (email === 'admin@admin.com' || parsed.uid === 'usr_super_01') {
-            return {
-              ...parsed,
-              uid: 'usr_super_01',
-              email: 'admin@admin.com',
-              displayName: 'Juan Pablo',
-              role: 'SuperAdmin',
-              isAdministrative: true,
-              category: 'Administrativo',
-              password: 'admin',
-              active: true
-            };
-          }
-          if (email === 'martin@iipsa.com.ar' || email === 'admin@bandiera.com' || parsed.uid === 'usr_super_alias') {
-            return {
-              ...parsed,
-              uid: 'usr_super_alias',
-              email: 'martin@iipsa.com.ar',
-              displayName: 'Martin Bandiera',
-              role: 'SuperAdmin',
-              isAdministrative: true,
-              category: 'Administrativo',
-              active: true
-            };
-          }
-          // Self-heal Gastón Villalobos if stored as Admin or if mistakenly cached with CGV / WRK-14
-          if (
-            email === 'gastonvillalobos2019@gmail.com' ||
-            parsed.uid === 'usr_adm_gaston' ||
-            parsed.uid === 'WRK-14' ||
-            parsed.displayName === 'CGV' ||
-            email === 'cgv@bandiera.com'
-          ) {
-            return {
-              ...parsed,
-              uid: 'usr_adm_gaston',
-              email: 'gastonvillalobos2019@gmail.com',
-              displayName: 'Gastón Villalobos (Administración)',
-              role: 'Admin',
-              isAdministrative: true,
-              category: 'Administrativo',
-              specialty: 'Logística, Operaciones y Flota',
-              cuadrilla: 'Administración Central',
-              active: true,
-              password: parsed.password || '123456',
-              customPermissions: {
-                ...ADMIN_PERMISSIONS,
-                manageFixedCosts: true,
-                manageBilling: true,
-                manageUsers: true,
-                manageAudits: true,
-                manageCollections: true,
-                manageLiquidations: true,
-                manageClients: true,
-                manageProjects: true,
-                manageMaterials: true,
-                manageVehicles: true,
-                createRemito: true,
-                exportExcel: true,
-                viewDashboard: true
-              }
-            };
-          }
-          if (email === 'rominabromeo@yahoo.com.ar' || parsed.uid === 'usr_adm_romina') {
-            return {
-              ...parsed,
-              uid: 'usr_adm_romina',
-              email: 'rominabromeo@yahoo.com.ar',
-              displayName: 'Romina (Administración)',
-              role: 'Admin',
-              isAdministrative: true,
-              category: 'Administrativo',
-              active: true,
-              password: parsed.password || '123456',
-              customPermissions: {
-                ...ADMIN_PERMISSIONS,
-                manageFixedCosts: true,
-                manageBilling: true,
-                manageUsers: true,
-                manageAudits: true,
-                manageCollections: true,
-                manageLiquidations: true,
-                manageClients: true,
-                manageProjects: true,
-                manageMaterials: true,
-                manageVehicles: true,
-                createRemito: true,
-                exportExcel: true,
-                viewDashboard: true
-              }
-            };
-          }
-          if (parsed.role === 'SuperAdmin') {
-            return {
-              ...parsed,
-              role: 'SuperAdmin',
-              active: true
-            };
-          }
-          return parsed;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    return INITIAL_USERS[0];
-  });
-
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      if (localStorage.getItem('bandiera_logged_out') === 'true') {
-        return false;
-      }
-      const saved = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.uid) return true;
-      }
-    } catch {
-      // ignore
-    }
-    return true;
-  });
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authAccount, setAuthAccount] = useState<AuthAccount | null>(null);
+  const [authReady, setAuthReady] = useState(false);
 
   // 3. Firebase Config
   const [firebaseConfig, setFirebaseConfig] = useState<FirebaseConnectionConfig>(() => {
@@ -709,7 +596,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           specialty: 'Logística, Operaciones y Flota',
           cuadrilla: 'Administración Central',
           active: true,
-          password: gastonUser.password || '123456',
+          password: gastonUser.password || '',
           customPermissions: {
             ...ADMIN_PERMISSIONS,
             manageFixedCosts: true,
@@ -743,7 +630,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           category: 'Administrativo',
           isAdministrative: true,
           active: true,
-          password: rominaUser.password || '123456',
+          password: rominaUser.password || '',
           customPermissions: {
             ...ADMIN_PERMISSIONS,
             manageFixedCosts: true,
@@ -770,61 +657,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(validUsers));
       } catch {}
 
-      // Update active session user if matched & self-heal Gastón/Admin accounts
-      setCurrentUser(prev => {
-        if (!prev) return INITIAL_USERS[0];
-        const prevEmail = (prev.email || '').toLowerCase().trim();
-        if (deletedUids.has(prev.uid) || (prevEmail && deletedEmails.has(prevEmail))) {
-          return INITIAL_USERS[0];
-        }
-
-        // If session was Gastón (or mistakenly logged in as CGV / WRK-14), heal to Admin Gastón
-        if (
-          prevEmail === 'gastonvillalobos2019@gmail.com' ||
-          prev.uid === 'usr_adm_gaston' ||
-          prev.uid === 'WRK-14' ||
-          prev.displayName === 'CGV' ||
-          prevEmail === 'cgv@bandiera.com'
-        ) {
-          const gaston = validUsers.find(
-            u => u.uid === 'usr_adm_gaston' || (u.email && u.email.toLowerCase().trim() === 'gastonvillalobos2019@gmail.com')
-          );
-          if (gaston) {
-            try {
-              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(gaston));
-            } catch {}
-            return gaston;
-          }
-        }
-
-        // If session was Martin Bandiera
-        if (
-          prevEmail === 'martin@iipsa.com.ar' ||
-          prev.uid === 'usr_super_alias' ||
-          prevEmail === 'admin@bandiera.com'
-        ) {
-          const martin = validUsers.find(
-            u => u.uid === 'usr_super_alias' || (u.email && u.email.toLowerCase().trim() === 'martin@iipsa.com.ar')
-          );
-          if (martin) {
-            try {
-              localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(martin));
-            } catch {}
-            return martin;
-          }
-        }
-
-        const matched = validUsers.find(
-          u => u.uid === prev.uid || (u.email && u.email.toLowerCase() === prevEmail)
-        );
-        if (matched) {
-          try {
-            localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(matched));
-          } catch {}
-          return matched;
-        }
-        return prev;
-      });
     });
 
     return () => {
@@ -843,18 +675,120 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [users]);
 
-  // Persist Current User
-  useEffect(() => {
+  // Session -> authoritative account (role comes only from app_roles in Supabase)
+  // Last verified account, so field users stay signed in without signal.
+  // Data access is still enforced by RLS once the device is back online.
+  const readCachedAccount = (): AuthAccount | null => {
     try {
-      if (currentUser && isAuthenticated) {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(currentUser));
-      } else {
-        localStorage.removeItem(AUTH_STORAGE_KEY);
+      const raw = localStorage.getItem(AUTH_ACCOUNT_CACHE_KEY);
+      const hasStoredSession = Object.keys(localStorage).some(k => /^sb-.*-auth-token$/.test(k));
+      return raw && hasStoredSession ? (JSON.parse(raw) as AuthAccount) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const loadAuthAccount = async (): Promise<AuthAccount | null> => {
+    const clear = () => {
+      setAuthAccount(null);
+      setIsAuthenticated(false);
+      setCurrentUser(null);
+      try {
+        localStorage.removeItem(AUTH_ACCOUNT_CACHE_KEY);
+      } catch {
+        // ignore
       }
+      return null;
+    };
+    const restoreCached = () => {
+      const cached = readCachedAccount();
+      if (!cached) return clear();
+      setAuthAccount(cached);
+      setIsAuthenticated(true);
+      return cached;
+    };
+
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+    const session = sessionData.session;
+    if (!session) {
+      // An expired token cannot be refreshed offline; keep the cached account.
+      return offline || sessionError ? restoreCached() : clear();
+    }
+    if (offline) return restoreCached();
+    const { data, error } = await supabase
+      .from('app_roles')
+      .select('email, role, profile_uid')
+      .eq('user_id', session.user.id)
+      .maybeSingle();
+    if (error && /fetch|network|load failed/i.test(error.message)) {
+      return restoreCached();
+    }
+    if (error || !data) return clear();
+    const { data: profileRow } = data.profile_uid
+      ? await supabase.from('documents').select('data').eq('collection', 'users').eq('id', data.profile_uid).maybeSingle()
+      : { data: null };
+    const account: AuthAccount = {
+      userId: session.user.id,
+      email: data.email,
+      role: data.role as UserRole,
+      profileUid: data.profile_uid,
+      displayName: (profileRow?.data as { displayName?: string } | undefined)?.displayName || undefined
+    };
+    setAuthAccount(account);
+    setIsAuthenticated(true);
+    try {
+      localStorage.setItem(AUTH_ACCOUNT_CACHE_KEY, JSON.stringify(account));
     } catch {
       // ignore
     }
-  }, [currentUser, isAuthenticated]);
+    return account;
+  };
+
+  useEffect(() => {
+    loadAuthAccount().finally(() => setAuthReady(true));
+    const { data: listener } = supabase.auth.onAuthStateChange(event => {
+      if (event === 'SIGNED_OUT') {
+        try {
+          localStorage.removeItem(AUTH_ACCOUNT_CACHE_KEY);
+        } catch {
+          // ignore
+        }
+        setAuthAccount(null);
+        setIsAuthenticated(false);
+        setCurrentUser(null);
+      }
+    });
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  // Profile shown in the UI = Firestore-style user doc matched to the session, with the role forced from app_roles.
+  useEffect(() => {
+    if (!authAccount) return;
+    setCurrentUser(prev => {
+      if (prev && authAccount.role === 'SuperAdmin' && prev.email.toLowerCase() !== authAccount.email) {
+        return prev; // keep an active "view as" preview
+      }
+      const profile =
+        users.find(u => authAccount.profileUid && u.uid === authAccount.profileUid) ||
+        users.find(u => (u.email || '').toLowerCase().trim() === authAccount.email);
+      const base: UserProfile = profile || {
+        uid: authAccount.profileUid || authAccount.userId,
+        email: authAccount.email,
+        displayName: authAccount.displayName || authAccount.email.split('@')[0],
+        role: authAccount.role,
+        tenantId: 'tenant_bandiera_hq',
+        companyName: 'JOB Martin Bandiera S.A.',
+        active: true
+      };
+      const { password: _omit, ...safe } = base;
+      return {
+        ...safe,
+        role: authAccount.role,
+        customPermissions: authAccount.role === 'SuperAdmin' ? { ...SUPERADMIN_PERMISSIONS } : safe.customPermissions
+      };
+    });
+  }, [authAccount, users]);
 
   // Persist Firebase Config
   useEffect(() => {
@@ -866,258 +800,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [firebaseConfig]);
 
   // Actions
-  const loginAsUser = (user: UserProfile) => {
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
+  // Admin-only "view as" preview. Data access stays bound to the real Supabase session (RLS).
+  const isPreviewingOtherUser =
+    !!authAccount && !!currentUser && (currentUser.email || '').toLowerCase() !== authAccount.email;
+
+  const exitPreview = () => {
+    setCurrentUser(null);
+    // New object re-runs the effect that rebuilds the real profile from the session.
+    setAuthAccount(a => (a ? { ...a } : a));
   };
 
-  const loginWithCredentials = (
+  const loginAsUser = (user: UserProfile) => {
+    if (authAccount?.role !== 'SuperAdmin') return;
+    setCurrentUser(user);
+  };
+
+  const loginWithCredentials = async (
     identifier: string,
     password: string
-  ): { success: boolean; message?: string } => {
-    const cleanId = (identifier || '').trim().toLowerCase();
-    const cleanPass = (password || '').trim();
-
-    if (!cleanId) {
-      return { success: false, message: 'Por favor, ingrese usuario o correo electrónico.' };
+  ): Promise<{ success: boolean; message?: string }> => {
+    const email = (identifier || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return { success: false, message: 'Ingrese su correo electrónico.' };
     }
-    if (!cleanPass) {
-      return { success: false, message: 'Por favor, ingrese su clave de acceso.' };
+    if (!password) {
+      return { success: false, message: 'Ingrese su clave de acceso.' };
     }
-
-    // Handle known user aliases so users can log in with their personal or company email
-    const aliasMap: Record<string, string[]> = {
-      'gastonvillalobos2019@gmail.com': ['gaston@bandiera.com', 'gaston villalobos', 'gaston'],
-      'gaston@bandiera.com': ['gastonvillalobos2019@gmail.com', 'gaston villalobos', 'gaston'],
-      'rominabromeo@yahoo.com.ar': ['romina@bandiera.com', 'romina bromeo', 'romina'],
-      'romina@bandiera.com': ['rominabromeo@yahoo.com.ar', 'romina bromeo', 'romina'],
-      'martin@iipsa.com.ar': ['admin@bandiera.com', 'martin bandiera', 'martin'],
-      'admin@bandiera.com': ['martin@iipsa.com.ar', 'martin bandiera', 'martin'],
-      'admin@admin.com': ['juan pablo', 'superadmin', 'admin']
-    };
-
-    // Search pool: live users first, then fallback to persisted
-    const searchPool = users.length > 0 ? users : loadAllPersistedUsers();
-    const { uids: deletedUids, emails: deletedEmails } = getDeletedUsersTombstone();
-
-    // Priority 1: Exact email match on typed cleanId
-    let found = searchPool.find(u => (u.email || '').toLowerCase().trim() === cleanId) ||
-                INITIAL_USERS.find(u => {
-                  const em = (u.email || '').toLowerCase().trim();
-                  return em === cleanId && !deletedUids.has(u.uid) && !deletedEmails.has(em);
-                });
-
-    // Priority 2: Exact UID match
-    if (!found) {
-      found = searchPool.find(u => (u.uid || '').toLowerCase().trim() === cleanId) ||
-              INITIAL_USERS.find(u => {
-                const em = (u.email || '').toLowerCase().trim();
-                return (u.uid || '').toLowerCase().trim() === cleanId && !deletedUids.has(u.uid) && !deletedEmails.has(em);
-              });
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      return { success: false, message: 'Correo o clave incorrectos.' };
     }
-
-    // Priority 3: Exact email match against known aliases
-    if (!found && aliasMap[cleanId]) {
-      for (const alias of aliasMap[cleanId]) {
-        const aliasMatch = searchPool.find(u => (u.email || '').toLowerCase().trim() === alias) ||
-                           INITIAL_USERS.find(u => {
-                             const em = (u.email || '').toLowerCase().trim();
-                             return em === alias && !deletedUids.has(u.uid) && !deletedEmails.has(em);
-                           });
-        if (aliasMatch) {
-          found = aliasMatch;
-          break;
-        }
-      }
+    const account = await loadAuthAccount();
+    if (!account) {
+      await supabase.auth.signOut();
+      return { success: false, message: 'Su cuenta no tiene un rol asignado. Pida acceso a un Administrador.' };
     }
-
-    // Priority 4: Exact displayName or normalized worker name match
-    if (!found) {
-      const cleanNormId = normalizeWorkerName(cleanId);
-      found = searchPool.find(u => {
-        const uName = (u.displayName || '').toLowerCase().trim();
-        return uName === cleanId || (cleanNormId && normalizeWorkerName(uName) === cleanNormId);
-      }) || INITIAL_USERS.find(u => {
-        const uName = (u.displayName || '').toLowerCase().trim();
-        const em = (u.email || '').toLowerCase().trim();
-        return (uName === cleanId || (cleanNormId && normalizeWorkerName(uName) === cleanNormId)) &&
-               !deletedUids.has(u.uid) && !deletedEmails.has(em);
-      });
-    }
-
-    // Priority 5: Fallback search across searchKeys
-    if (!found) {
-      const searchKeys = [cleanId, ...(aliasMap[cleanId] || [])];
-      found = searchPool.find(u => {
-        const uEmail = (u.email || '').toLowerCase().trim();
-        const uName = (u.displayName || '').toLowerCase().trim();
-        const emailPrefix = uEmail.split('@')[0];
-        const nameNoSpace = uName.replace(/\s+/g, '');
-
-        return searchKeys.some(key => {
-          const keyNoSpace = key.replace(/\s+/g, '');
-          return (
-            uEmail === key ||
-            emailPrefix === key ||
-            uName === key ||
-            nameNoSpace === keyNoSpace ||
-            uName.includes(key)
-          );
-        });
-      }) || INITIAL_USERS.find(u => {
-        const uEmail = (u.email || '').toLowerCase().trim();
-        if (deletedUids.has(u.uid) || deletedEmails.has(uEmail)) return false;
-
-        const uName = (u.displayName || '').toLowerCase().trim();
-        const emailPrefix = uEmail.split('@')[0];
-        const nameNoSpace = uName.replace(/\s+/g, '');
-
-        return searchKeys.some(key => {
-          const keyNoSpace = key.replace(/\s+/g, '');
-          return (
-            uEmail === key ||
-            emailPrefix === key ||
-            uName === key ||
-            nameNoSpace === keyNoSpace ||
-            uName.includes(key)
-          );
-        });
-      });
-    }
-
-    // Normalize Gastón Villalobos profile to Admin with full permissions
-    if (
-      found &&
-      (found.uid === 'usr_adm_gaston' ||
-       (found.email || '').toLowerCase().trim() === 'gastonvillalobos2019@gmail.com' ||
-       cleanId === 'gastonvillalobos2019@gmail.com')
-    ) {
-      found = {
-        ...found,
-        uid: 'usr_adm_gaston',
-        email: 'gastonvillalobos2019@gmail.com',
-        displayName: 'Gastón Villalobos (Administración)',
-        role: 'Admin',
-        isAdministrative: true,
-        category: 'Administrativo',
-        specialty: 'Logística, Operaciones y Flota',
-        cuadrilla: 'Administración Central',
-        active: true,
-        password: found.password || '123456',
-        customPermissions: {
-          ...ADMIN_PERMISSIONS,
-          manageFixedCosts: true,
-          manageBilling: true,
-          manageUsers: true,
-          manageAudits: true,
-          manageCollections: true,
-          manageLiquidations: true,
-          manageClients: true,
-          manageProjects: true,
-          manageMaterials: true,
-          manageVehicles: true,
-          createRemito: true,
-          exportExcel: true,
-          viewDashboard: true
-        }
-      };
-      saveUserToFirestore(found).catch(() => {});
-    }
-
-    if (found) {
-      saveUserToFirestore(found).catch(() => {});
-      setUsers(prev => [found!, ...prev.filter(u => u.email.toLowerCase() !== found!.email.toLowerCase())]);
-    }
-
-    if (!found) {
-      return {
-        success: false,
-        message: `El usuario o correo "${identifier}" no se encuentra registrado en la base de datos. Pida al Administrador que cree su cuenta con los permisos correspondientes.`
-      };
-    }
-
-    if (found.active === false) {
-      return {
-        success: false,
-        message: 'Este usuario se encuentra inactivo. Solicite su activación a un Administrador.'
-      };
-    }
-
-    // Passwords accepted:
-    // 1. Explicit user password (case-sensitive or trimmed)
-    // 2. Global demo & recovery keys ('123456', 'bandiera2026', 'admin123', 'admin', 'bandiera')
-    // 3. User role name (e.g. 'superadmin', 'capataz', 'empleado')
-    const storedPass = (found.password || '123456').trim();
-    const isMasterDemoPassword = ['123456', 'bandiera2026', 'admin123', 'admin', 'bandiera'].includes(cleanPass);
-    const isRolePassword = cleanPass.toLowerCase() === found.role.toLowerCase();
-    const isExactMatch = cleanPass === storedPass || cleanPass.toLowerCase() === storedPass.toLowerCase();
-
-    if (!isExactMatch && !isMasterDemoPassword && !isRolePassword) {
-      return {
-        success: false,
-        message: 'Contraseña incorrecta. Verifique la clave que le fue provista o intente con 123456.'
-      };
-    }
-
-    // Login successful
-    setCurrentUser(found);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(found));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
-
     return { success: true };
   };
 
-  const loginWithEmail = (email: string): boolean => {
-    const freshUsers = loadAllPersistedUsers();
-    const clean = (email || '').trim().toLowerCase();
-    const found = freshUsers.find(u => u.email.toLowerCase().trim() === clean);
-    if (found) {
-      setCurrentUser(found);
-      setIsAuthenticated(true);
-      try {
-        localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(found));
-        localStorage.removeItem('bandiera_logged_out');
-      } catch {}
-      return true;
-    }
-    // Create new profile if not found
-    const newProfile: UserProfile = {
-      uid: `usr_${Date.now()}`,
-      email: clean,
-      displayName: clean.split('@')[0],
-      role: 'Empleado',
-      password: '123456',
-      tenantId: 'tenant_bandiera_hq',
-      companyName: 'JOB Martin Bandiera S.A.',
-      active: true,
-      createdAt: new Date().toISOString().split('T')[0]
-    };
-    const updated = [...freshUsers, newProfile];
-    setUsers(updated);
-    setCurrentUser(newProfile);
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(newProfile));
-      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(updated));
-      localStorage.removeItem('bandiera_logged_out');
-    } catch {}
-    return true;
-  };
-
   const logout = () => {
+    const pending = pendingWriteCount();
+    if (
+      pending > 0 &&
+      !window.confirm(
+        `Hay ${pending} cambio(s) sin subir porque no hay conexión. Si cierra sesión no se subirán hasta que vuelva a ingresar. ¿Cerrar sesión igual?`
+      )
+    ) {
+      return;
+    }
+    supabase.auth.signOut().catch(() => {});
+    setAuthAccount(null);
     setCurrentUser(null);
     setIsAuthenticated(false);
     try {
       localStorage.removeItem(AUTH_STORAGE_KEY);
       sessionStorage.removeItem(AUTH_STORAGE_KEY);
-      localStorage.setItem('bandiera_logged_out', 'true');
+      localStorage.removeItem(AUTH_ACCOUNT_CACHE_KEY);
     } catch {
       // ignore
     }
@@ -1125,7 +863,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const createUser = (userData: Omit<UserProfile, 'uid'> & { uid?: string }): UserProfile => {
     const cleanEmail = (userData.email || '').trim().toLowerCase();
-    const cleanPassword = (userData.password && userData.password.trim()) || '123456';
+    const cleanPassword = (userData.password && userData.password.trim()) || '';
     const cleanName = (userData.displayName || cleanEmail.split('@')[0] || 'Usuario').trim();
     const norm = normalizeWorkerName(cleanName);
 
@@ -1163,7 +901,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       tenantId: userData.tenantId || 'tenant_bandiera_hq',
       companyName: userData.companyName || 'JOB Martin Bandiera S.A.',
       active: userData.active !== undefined ? userData.active : true,
-      createdAt: userData.createdAt || new Date().toISOString().split('T')[0],
+      createdAt: userData.createdAt || todayLocalISO(),
       customPermissions: userData.customPermissions
     };
 
@@ -1171,6 +909,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveUserToFirestore(newUser).catch(err => {
       console.warn('Could not save user to Firestore immediately:', err);
     });
+
+    // Login account in Supabase Auth (needs an email and a key of 8+ characters)
+    const loginPassword = (userData.password || '').trim();
+    if (cleanEmail && loginPassword.length >= 8) {
+      supabase
+        .rpc('admin_create_user', {
+          p_email: cleanEmail,
+          p_password: loginPassword,
+          p_role: newUser.role,
+          p_profile_uid: newUid
+        })
+        .then(({ error }) => {
+          if (error) alert(`No se pudo crear el acceso de ${cleanEmail}: ${error.message}`);
+        });
+    } else if (cleanEmail && loginPassword) {
+      alert('El perfil se guardó, pero el acceso no: la clave debe tener al menos 8 caracteres.');
+    }
 
     // Also persist to workers in Firestore to ensure bidirectional consistency
     const workerSyncPayload = {
@@ -1228,8 +983,40 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...updates
       };
       if (updates.email) mergedUser.email = updates.email.trim().toLowerCase();
-      if (updates.password !== undefined) {
-        mergedUser.password = updates.password.trim() || '123456';
+      const newPassword = (updates.password || '').trim();
+      delete mergedUser.password;
+      const loginEmail = (mergedUser.email || '').toLowerCase().trim();
+      if (loginEmail && newPassword && newPassword !== (existing.password || '')) {
+        if (newPassword.length < 8) {
+          alert('La clave de acceso debe tener al menos 8 caracteres. No se cambió.');
+        } else {
+          supabase.rpc('admin_set_password', { p_email: loginEmail, p_password: newPassword }).then(({ error }) => {
+            if (!error) return;
+            if (error.message.includes('No existe cuenta')) {
+              supabase
+                .rpc('admin_create_user', {
+                  p_email: loginEmail,
+                  p_password: newPassword,
+                  p_role: mergedUser.role,
+                  p_profile_uid: existing.uid
+                })
+                .then(({ error: createError }) => {
+                  if (createError) alert(`No se pudo crear el acceso: ${createError.message}`);
+                });
+            } else {
+              alert(`No se pudo cambiar la clave: ${error.message}`);
+            }
+          });
+        }
+      }
+      if (loginEmail && updates.role && updates.role !== existing.role) {
+        supabase
+          .from('app_roles')
+          .update({ role: updates.role })
+          .eq('email', loginEmail)
+          .then(({ error }) => {
+            if (error) alert(`No se pudo cambiar el rol de acceso: ${error.message}`);
+          });
       }
       saveUserToFirestore(mergedUser).catch(err => {
         console.warn('Could not update user in Firestore immediately:', err);
@@ -1266,7 +1053,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const updated = { ...u, ...updates };
           if (updates.email) updated.email = updates.email.trim().toLowerCase();
           if (updates.password !== undefined) {
-            updated.password = updates.password.trim() || '123456';
+            updated.password = updates.password.trim() || '';
           }
           if (currentUser && (currentUser.uid === u.uid || currentUser.email.toLowerCase() === u.email.toLowerCase())) {
             setCurrentUser(updated);
@@ -1283,7 +1070,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const newlyMerged: UserProfile = {
           ...existing,
           ...updates,
-          password: updates.password !== undefined ? (updates.password.trim() || '123456') : (existing.password || '123456')
+          password: updates.password !== undefined ? (updates.password.trim() || '') : (existing.password || '')
         };
         updatedList.push(newlyMerged);
       }
@@ -1396,14 +1183,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return true;
   };
 
-  // Role Checks
+  // Role Checks (role of the displayed profile; a SuperAdmin "view as" preview shows that user's role)
   const role = currentUser?.role;
 
-  const isSuperAdmin = Boolean(
-    currentUser &&
-      (role === 'SuperAdmin' ||
-        ['admin@bandiera.com', 'admin@admin.com', 'valenkoreinmolina@gmail.com'].includes((currentUser.email || '').toLowerCase().trim()))
-  );
+  const isSuperAdmin = Boolean(currentUser && role === 'SuperAdmin');
 
   const isOwner = role === 'Owner';
   const isGerente = role === 'Gerente';
@@ -1424,9 +1207,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         users,
         availableUsers: users,
         loginAsUser,
+        isPreviewingOtherUser,
+        exitPreview,
         loginWithCredentials,
-        loginWithEmail,
         logout,
+        authReady,
         createUser,
         updateUser,
         deleteUser,

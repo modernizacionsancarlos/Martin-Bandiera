@@ -2,6 +2,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { TechnicalAuditRecord, ArchivedReceipt, PaymentEntry } from '../types';
 import { roundCurrency } from './calculationUtils';
+import { todayLocalISO } from './dateUtils';
 
 /**
  * Format currency with Argentine style preserving centavos when present
@@ -533,7 +534,7 @@ export const generateFacturaAgrupadaPDF = (data: {
   doc.text('FECHA DE FACTURACIÓN:', 120, currentY + 6);
   doc.setFontSize(9.5);
   doc.setTextColor(15, 23, 42);
-  doc.text(data.invoiceDate || new Date().toISOString().split('T')[0], 120, currentY + 12);
+  doc.text(data.invoiceDate || todayLocalISO(), 120, currentY + 12);
 
   doc.setFontSize(8);
   doc.setTextColor(100, 116, 139);
@@ -667,7 +668,7 @@ export const generateRemitoPasadoConsolidadoPDF = (data: {
   const totalServicios = roundCurrency(Math.max(0, totalFinalPasado - totalMateriales));
 
   const receiptNumber = data.receiptNumber || `RPC-${Date.now().toString().slice(-6)}`;
-  const dateStr = data.date || new Date().toISOString().split('T')[0];
+  const dateStr = data.date || todayLocalISO();
 
   const dates = data.records.map(r => r.date).filter(Boolean).sort();
   const dateRangeStr = dates.length > 1

@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { WorkerLiquidationDetail } from '../types';
+import { todayLocalISO } from './dateUtils';
 
 /**
  * Formats a number to Argentine currency string
@@ -443,7 +444,7 @@ export const generateSingleLiquidationReceiptPDF = (worker: WorkerLiquidationDet
   renderIndividualWorkerReceipt(doc, worker);
 
   const cleanName = worker.name.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   doc.save(`Recibo_Liquidacion_${cleanName}_${dateStr}.pdf`);
 };
 
@@ -475,6 +476,6 @@ export const generateBatchLiquidationReceiptsPDF = (workers: WorkerLiquidationDe
     renderIndividualWorkerReceipt(doc, worker, index, workers.length);
   });
 
-  const dateStr = new Date().toISOString().split('T')[0];
+  const dateStr = todayLocalISO();
   doc.save(`Recibos_Liquidacion_Grupal_${workers.length}_Empleados_${dateStr}.pdf`);
 };
