@@ -9,3 +9,5 @@ android
 assets
 *.apk
 *.aab
+
+.sync-backup/

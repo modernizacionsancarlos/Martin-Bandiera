@@ -28,6 +28,7 @@ import {
   Keyboard,
   ArrowLeft,
   ArrowRight,
+  Smartphone,
   Pencil,
   Sparkles,
   FileCheck2,
@@ -223,6 +224,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterClient, setFilterClient] = useState<string>('all');
   const [filterSemaforo, setFilterSemaforo] = useState<'all' | 'verde' | 'naranja' | 'rojo' | 'neutro'>('all');
+  const [filterOrigen, setFilterOrigen] = useState<'all' | 'app' | 'noApp'>('all');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
@@ -430,13 +432,19 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       const matchesSemaforo =
         filterSemaforo === 'all' || effectiveSem === filterSemaforo;
 
+      // Origen: remitos loaded from the app vs the rest (office, Excel, paper only)
+      const matchesOrigen =
+        filterOrigen === 'all' || (filterOrigen === 'app' ? !!record.origenCampo : !record.origenCampo);
+
       // Date Range
       const matchesStart = !startDate || record.date >= startDate;
       const matchesEnd = !endDate || record.date <= endDate;
 
-      return matchesSearch && matchesGuardia && matchesStatus && matchesClient && matchesSemaforo && matchesStart && matchesEnd;
+      return matchesSearch && matchesGuardia && matchesStatus && matchesClient && matchesSemaforo && matchesOrigen && matchesStart && matchesEnd;
     });
-  }, [technicalAuditRecords, searchTerm, filterGuardia, filterStatus, filterClient, filterSemaforo, startDate, endDate]);
+  }, [technicalAuditRecords, searchTerm, filterGuardia, filterStatus, filterClient, filterSemaforo, filterOrigen, startDate, endDate]);
+
+  const appRecordsCount = useMemo(() => technicalAuditRecords.filter(r => r.origenCampo).length, [technicalAuditRecords]);
 
   // Semáforo counts
   const semaforoCounts = useMemo(() => {
@@ -1065,6 +1073,20 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
             </select>
 
             <select
+              aria-label="Origen del remito"
+              value={filterOrigen}
+              onChange={e => {
+                setFilterOrigen(e.target.value as typeof filterOrigen);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold cursor-pointer"
+            >
+              <option value="all">Origen: Todos ({technicalAuditRecords.length})</option>
+              <option value="app">Cargados desde la app ({appRecordsCount})</option>
+              <option value="noApp">No cargados desde la app ({technicalAuditRecords.length - appRecordsCount})</option>
+            </select>
+
+            <select
               value={filterGuardia}
               onChange={e => {
                 setFilterGuardia(e.target.value as any);
@@ -1270,6 +1292,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
             <button
               onClick={() => {
                 setFilterSemaforo('all');
+                setFilterOrigen('all');
                 setCurrentPage(1);
               }}
               className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
@@ -1362,7 +1385,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                 className="px-2 py-1 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
               />
             </div>
-            {(startDate || endDate || searchTerm || filterGuardia !== 'all' || filterStatus !== 'all' || filterClient !== 'all' || filterSemaforo !== 'all') && (
+            {(startDate || endDate || searchTerm || filterGuardia !== 'all' || filterStatus !== 'all' || filterClient !== 'all' || filterSemaforo !== 'all' || filterOrigen !== 'all') && (
               <button
                 onClick={() => {
                   setStartDate('');
@@ -1372,6 +1395,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                   setFilterStatus('all');
                   setFilterClient('all');
                   setFilterSemaforo('all');
+                  setFilterOrigen('all');
                 }}
                 className="text-cyan-500 hover:underline text-[11px] font-bold ml-1 cursor-pointer"
               >
@@ -1786,6 +1810,16 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                           }`}>
                             {record.remitoId}
                           </span>
+                          {record.origenCampo && (
+                            <span
+                              className={`flex items-center gap-1 mt-1 w-fit px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${
+                                isColoredRow ? 'bg-white/20 text-white' : 'bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300'
+                              }`}
+                              title={`Cargado desde la app por ${record.cargadoPorNombre || record.cargadoPor || 'personal de campo'}`}
+                            >
+                              <Smartphone className="w-2.5 h-2.5" /> App
+                            </span>
+                          )}
                           {record.transferido && record.transferencias?.length ? (
                             <span
                               className={`block mt-1 w-fit px-1.5 py-0.5 rounded-md text-[9px] font-black uppercase ${
@@ -2605,11 +2639,19 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               </button>
             </div>
 
-            {(selectedRecord.transferencias?.length || selectedRecord.editadoEnCampo) && (
+            {(selectedRecord.origenCampo || selectedRecord.transferencias?.length || selectedRecord.editadoEnCampo) && (
               <div className="p-3 rounded-xl bg-violet-50 dark:bg-violet-950/40 border border-violet-200 dark:border-violet-900 text-xs space-y-1.5">
                 <span className="block text-[10px] font-black uppercase tracking-wider text-violet-700 dark:text-violet-300">Historial de campo</span>
-                {selectedRecord.cargadoPorNombre && (
-                  <p className="text-slate-700 dark:text-slate-200">Cargado por <strong>{selectedRecord.cargadoPorNombre}</strong></p>
+                {selectedRecord.origenCampo && (
+                  <p className="flex items-center gap-1.5 text-slate-700 dark:text-slate-200">
+                    <Smartphone className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400 shrink-0" />
+                    <span>
+                      Cargado desde la app por <strong>{selectedRecord.cargadoPorNombre || selectedRecord.cargadoPor || 'personal de campo'}</strong>
+                      {selectedRecord.cargadoEn
+                        ? ` el ${new Date(selectedRecord.cargadoEn).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}`
+                        : ''}
+                    </span>
+                  </p>
                 )}
                 {(selectedRecord.transferencias || []).map((t, i) => (
                   <p key={i} className="text-slate-700 dark:text-slate-200">

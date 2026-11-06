@@ -13,6 +13,7 @@ Los remitos cargados sin señal se guardan en el teléfono y se suben solos al v
   - No ven montos, tarifas, facturación ni ningún menú.
   - La base les bloquea la lectura de todos los datos del negocio.
   - El remito viaja por la función `submit_field_report`. El servidor descarta cualquier monto, asigna el número `#N-AAAA` y lo marca con `costosPendientes`.
+  - El número lo asigna siempre el servidor, en el orden en que cada remito llega. Sin señal no tiene número: lo recibe al subir. Dos cargas simultáneas nunca comparten número, tampoco con las que se hacen desde la web.
   - Mientras el remito siga en estado "Cargado", quien lo tiene a cargo puede editarlo (`update_field_report`), por ejemplo para sumar una jornada al volver al lugar. Cada edición vuelve a marcarlo para recalcular costos.
   - Un Capataz puede transferir el remito a otro Capataz que tenga cuenta (`transfer_field_report`), con una nota opcional. El que recibe lo ve en "Mis remitos" y lo puede seguir editando.
   - En Auditoría, administración ve las etiquetas "Transferido a …" y "Editado en campo", y en el detalle el historial completo.
