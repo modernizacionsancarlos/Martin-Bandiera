@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { PlusCircle, LogOut, CheckCircle2, CloudUpload, AlertTriangle, Sun, Moon, RefreshCw, Pencil, ArrowRightLeft, Lock, X } from 'lucide-react';
+import { PlusCircle, LogOut, CheckCircle2, CloudUpload, AlertTriangle, Sun, Moon, RefreshCw, Pencil, ArrowRightLeft, Lock, X, KeyRound } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { OUTBOX_EVENT, SYNC_ERROR_EVENT } from '../services/docstore';
@@ -20,6 +20,7 @@ import {
   updateFieldReport
 } from '../services/fieldReports';
 import { FieldRemitoForm } from './FieldRemitoForm';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 
 type Capataz = { id: string; name: string; cuadrilla?: string | null; hasAccount?: boolean };
 
@@ -37,6 +38,7 @@ export const FieldShell: React.FC = () => {
   const [editing, setEditing] = useState<FieldReportItem | null>(null);
   const [transferring, setTransferring] = useState<FieldReportItem | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
 
   const refresh = useCallback(() => {
     setHistory(sentHistory());
@@ -160,6 +162,9 @@ export const FieldShell: React.FC = () => {
           <button type="button" onClick={toggleDarkMode} className="p-2 rounded-lg hover:bg-slate-800 cursor-pointer" title={darkMode ? 'Modo claro' : 'Modo oscuro'}>
             {darkMode ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5" />}
           </button>
+          <button type="button" onClick={() => setPasswordOpen(true)} className="p-2 rounded-lg hover:bg-slate-800 cursor-pointer" title="Cambiar mi clave">
+            <KeyRound className="w-5 h-5" />
+          </button>
           <button type="button" onClick={logout} className="p-2 rounded-lg hover:bg-slate-800 cursor-pointer" title="Cerrar sesión">
             <LogOut className="w-5 h-5" />
           </button>
@@ -282,6 +287,8 @@ export const FieldShell: React.FC = () => {
           </div>
         )}
       </main>
+
+      {passwordOpen && <ChangePasswordDialog onClose={() => setPasswordOpen(false)} />}
 
       {transferring && (
         <TransferDialog item={transferring} capataces={otherCapataces} onCancel={() => setTransferring(null)} onConfirm={handleTransfer} />

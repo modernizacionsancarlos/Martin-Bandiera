@@ -6,6 +6,7 @@ import { LoginPage } from './components/LoginPage';
 import { SyncErrorToast } from './components/SyncErrorToast';
 import { SyncStatusBadge } from './components/SyncStatusBadge';
 import { FieldShell } from './components/FieldShell';
+import { ForcePasswordChange } from './components/ForcePasswordChange';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './components/DashboardView';
 import { FacturadoView } from './components/FacturadoView';
@@ -69,7 +70,7 @@ const AccessDeniedNotice: React.FC<AccessDeniedNoticeProps> = ({
 );
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, currentUser, permissions, authReady } = useAuth();
+  const { isAuthenticated, currentUser, permissions, authReady, mustChangePassword } = useAuth();
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [showFieldReportModal, setShowFieldReportModal] = useState(false);
@@ -106,6 +107,10 @@ const AppContent: React.FC = () => {
   // Authentication gate: if user is not authenticated, show LoginPage
   if (!isAuthenticated || !currentUser) {
     return <LoginPage />;
+  }
+
+  if (mustChangePassword) {
+    return <ForcePasswordChange />;
   }
 
   // Field staff only load remitos: no menus, no amounts, no accounting.

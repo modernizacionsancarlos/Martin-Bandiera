@@ -23,6 +23,8 @@ interface AuthAccount {
   profileUid: string | null;
   // Name from the account's own users doc: field roles cannot load the users list.
   displayName?: string;
+  // Account copied from the old system: it must set a new password on first login.
+  mustChangePassword?: boolean;
 }
 
 export interface FirebaseConnectionConfig {
@@ -47,6 +49,8 @@ interface AuthContextType {
   loginWithCredentials: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
   authReady: boolean;
+  mustChangePassword: boolean;
+  changeOwnPassword: (password: string, current?: string) => Promise<string | null>;
   
   // User Management CRUD
   createUser: (userData: Omit<UserProfile, 'uid'> & { uid?: string }) => UserProfile;
@@ -718,7 +722,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (offline) return restoreCached();
     const { data, error } = await supabase
       .from('app_roles')
-      .select('email, role, profile_uid')
+      .select('email, role, profile_uid, must_change_password')
       .eq('user_id', session.user.id)
       .maybeSingle();
     if (error && /fetch|network|load failed/i.test(error.message)) {
@@ -733,7 +737,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: data.email,
       role: data.role as UserRole,
       profileUid: data.profile_uid,
-      displayName: (profileRow?.data as { displayName?: string } | undefined)?.displayName || undefined
+      displayName: (profileRow?.data as { displayName?: string } | undefined)?.displayName || undefined,
+      mustChangePassword: !!data.must_change_password
     };
     setAuthAccount(account);
     setIsAuthenticated(true);
@@ -859,6 +864,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // ignore
     }
+  };
+
+  // Returns an error message, or null when the password changed.
+  const changeOwnPassword = async (password: string, current?: string): Promise<string | null> => {
+    const { error } = await supabase.rpc('change_own_password', { p_password: password, p_current: current ?? null });
+    if (error) {
+      return /distinta|8 caracteres|actual/i.test(error.message) ? error.message : 'No se pudo cambiar la clave. Intente de nuevo.';
+    }
+    setAuthAccount(prev => {
+      if (!prev) return prev;
+      const next = { ...prev, mustChangePassword: false };
+      try {
+        localStorage.setItem(AUTH_ACCOUNT_CACHE_KEY, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    return null;
   };
 
   const createUser = (userData: Omit<UserProfile, 'uid'> & { uid?: string }): UserProfile => {
@@ -1212,6 +1236,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginWithCredentials,
         logout,
         authReady,
+        mustChangePassword: !!authAccount?.mustChangePassword,
+        changeOwnPassword,
         createUser,
         updateUser,
         deleteUser,

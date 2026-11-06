@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Layers,
   FileSpreadsheet,
@@ -6,6 +7,7 @@ import {
   FileText,
   CheckCircle2,
   FolderArchive,
+  KeyRound,
   Building2,
   Wrench,
   Boxes,
@@ -31,6 +33,7 @@ import {
   HardHat,
   Truck
 } from 'lucide-react';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
@@ -68,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     users,
     logout
   } = useAuth();
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const { darkMode, toggleDarkMode } = useTheme();
 
   // Dynamic status counters
@@ -484,6 +488,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
 
             <button
+              type="button"
+              onClick={() => setPasswordOpen(true)}
+              className="p-2.5 rounded-xl bg-slate-800/60 hover:bg-cyan-500/20 text-slate-400 hover:text-cyan-300 border border-slate-700/50 hover:border-cyan-500/40 transition-colors cursor-pointer shrink-0"
+              title="Cambiar mi clave"
+            >
+              <KeyRound className="w-4 h-4" />
+            </button>
+
+            <button
               onClick={logout}
               className="p-2.5 rounded-xl bg-slate-800/60 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 border border-slate-700/50 hover:border-rose-500/40 transition-colors cursor-pointer shrink-0"
               title="Cerrar Sesión"
@@ -491,6 +504,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <LogOut className="w-4 h-4" />
             </button>
           </div>
+        )}
+
+        {!isOpen && (
+          <button
+            type="button"
+            onClick={() => setPasswordOpen(true)}
+            className="w-full flex items-center justify-center p-2 rounded-xl bg-slate-800/40 hover:bg-cyan-500/20 text-slate-400 hover:text-cyan-300 border border-slate-800 transition-colors cursor-pointer"
+            title="Cambiar mi clave"
+          >
+            <KeyRound className="w-4 h-4" />
+          </button>
         )}
 
         {!isOpen && (
@@ -503,6 +527,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </button>
         )}
       </div>
+      {passwordOpen && createPortal(<ChangePasswordDialog onClose={() => setPasswordOpen(false)} />, document.body)}
     </aside>
   );
 };
