@@ -680,6 +680,14 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       helperPay: costs.helperPay,
       suggestedPrice: costs.suggestedPrice,
       billedPrice: recordInput.billedPrice > 0 ? recordInput.billedPrice : costs.suggestedPrice,
+      // Margin in $, so Logística + M.O. + Materiales + Honorarios adds up to the price in every view.
+      honorarios: recordInput.honorarios ?? Math.max(
+        0,
+        roundCurrency(
+          (recordInput.billedPrice > 0 ? recordInput.billedPrice : costs.suggestedPrice) -
+            (costs.logisticsCost + costs.techPay + costs.helperPay + (recordInput.materialsCost || 0))
+        )
+      ),
       collectedPrice: recordInput.status === 'Cobrado' ? (recordInput.billedPrice || costs.suggestedPrice) : (recordInput.collectedPrice || 0),
       capatazCommissionPct,
       capatazProfit
@@ -702,7 +710,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }, 0);
       const { id, remitoId, ...rest } = rec;
       return {
-        ...priceAuditRecord({ ...rest, materialsCost, billedPrice: 0, collectedPrice: 0 }, id, remitoId),
+        ...priceAuditRecord({ ...rest, honorarios: undefined, materialsCost, billedPrice: 0, collectedPrice: 0 }, id, remitoId),
         costosPendientes: false
       };
     });
@@ -858,6 +866,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Always ensure operatingCost is consistent: Logistics + Labor + Materials
           if (updates.operatingCost === undefined && (updates.materialsCost !== undefined || updates.laborDirectCost !== undefined || updates.logisticsCost !== undefined || updates.hoursWorked !== undefined)) {
             updated.operatingCost = roundCurrency((Number(updated.logisticsCost) || 0) + (Number(updated.laborDirectCost) || 0) + (Number(updated.materialsCost) || 0));
+          }
+
+          // A cost changed on a remito not invoiced yet: its price follows
+          // Logística + M.O. Capataz + M.O. Ayudante + Materiales + Honorarios, unless this same update sets the price.
+          const invoiced = updated.status === 'Facturado' || updated.status === 'Cobrado';
+          const costChanged = ['logisticsCost', 'techPay', 'helperPay', 'materialsCost', 'honorarios', 'hoursWorked', 'viajes', 'distanceKm', 'teamMembers', 'helpers', 'leadTech']
+            .some(k => k in updates);
+          if (!invoiced && costChanged && updates.billedPrice === undefined && updated.honorarios !== undefined && updated.honorarios !== null && !isNaN(Number(updated.honorarios))) {
+            const remitoTotal = roundCurrency(
+              (Number(updated.logisticsCost) || 0) +
+              (Number(updated.techPay) || 0) +
+              (Number(updated.helperPay) || 0) +
+              (Number(updated.materialsCost) || 0) +
+              Number(updated.honorarios)
+            );
+            updated.billedPrice = remitoTotal;
+            updated.suggestedPrice = remitoTotal;
           }
 
           // Compute Capataz profit strictly on COSTO DE SERVICIO (laborDirectCost)

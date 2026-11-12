@@ -476,12 +476,15 @@ export function calculateRecordHonorarios(
 }
 
 /**
- * Computes Costo Total del Remito (suma de todo lo otro: Logística + M.O. Capataz + M.O. Ayudante + Materiales + Costo Honorarios)
+ * Costo Total del Remito: the stored price (billedPrice), the same value the comprobante, Facturado, PDFs and
+ * reports use. Only a remito without a price falls back to Logística + M.O. Capataz + M.O. Ayudante + Materiales + Honorarios.
  */
 export function calculateCostoTotalRemito(
   record: Partial<TechnicalAuditRecord>,
   defaultMarginPct: number = 35
 ): number {
+  const stored = Number(record.billedPrice) > 0 ? Number(record.billedPrice) : Number(record.suggestedPrice) || 0;
+  if (stored > 0) return roundCurrency(stored);
   const baseCosts = roundCurrency(
     (Number(record.logisticsCost) || 0) +
     (Number(record.techPay) || 0) +

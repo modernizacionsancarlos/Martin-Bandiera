@@ -183,7 +183,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
 
       const calculatedHon = recordToEdit.honorarios ?? null;
       setMarginValue(calculatedHon);
-      setCustomSuggestedPrice(recordToEdit.billedPrice || recordToEdit.suggestedPrice || null);
+      // With honorarios the price follows the costs (cost + honorarios); a stored price would freeze an old total.
+      setCustomSuggestedPrice(calculatedHon !== null ? null : recordToEdit.billedPrice || recordToEdit.suggestedPrice || null);
       if (recordToEdit.capatazCommissionPct !== undefined) {
         setCapatazCommissionPct(recordToEdit.capatazCommissionPct);
       }
@@ -553,7 +554,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       ? Math.max(0, customSuggestedPrice - (liveCosts.operatingCost || 0))
       : defaultMarginValue;
 
-  const effectiveSuggestedPrice = customSuggestedPrice !== null
+  // Once the margin is known in $, the total is always cost + margin, so changing hours or trips updates it.
+  const effectiveSuggestedPrice = marginValue === null && customSuggestedPrice !== null
     ? customSuggestedPrice
     : roundCurrency((liveCosts.operatingCost || 0) + effectiveMarginValue);
 
