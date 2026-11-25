@@ -67,7 +67,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const {
     currentUser,
     canViewFinancials,
-    canResetSystem,
     canManageUsers,
     canCreateRemito,
     permissions,
@@ -410,7 +409,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Bottom User, Theme & Database Controls */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/60 space-y-2">
         {/* Poner Sistema en 0 Button (Protegido por permisos RBAC) */}
-        {onOpenResetModal && canResetSystem && (
+        {onOpenResetModal && canAudit && (
           <button
             onClick={onOpenResetModal}
             className="w-full flex items-center justify-between p-2.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 text-xs font-black text-rose-300 hover:text-rose-100 transition-colors cursor-pointer border border-rose-800/60 shadow-sm group"

@@ -84,7 +84,6 @@ interface AuthContextType {
   canManageVehicles: boolean;
   canManageFixedCosts: boolean;
   canManageUsers: boolean;
-  canResetSystem: boolean;
   canExportExcel: boolean;
   canCreateRemito: boolean;
 
@@ -1265,7 +1264,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         canManageVehicles: isSuperAdmin || permissions.manageVehicles,
         canManageFixedCosts: isSuperAdmin || permissions.manageFixedCosts,
         canManageUsers: isSuperAdmin || permissions.manageUsers,
-        canResetSystem: isSuperAdmin || permissions.resetSystem,
         canExportExcel: isSuperAdmin || permissions.exportExcel,
         canCreateRemito: isSuperAdmin || permissions.createRemito,
         firebaseConfig,

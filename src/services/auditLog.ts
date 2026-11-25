@@ -65,6 +65,36 @@ export async function listAccess(): Promise<AuditAccess[]> {
   return (data as AuditAccess[]) || [];
 }
 
+export interface BackupRun {
+  id: number;
+  at: string;
+  kind: string;
+  documents: number;
+  remitos: number;
+}
+
+export async function listBackups(): Promise<BackupRun[]> {
+  const { data, error } = await supabase.rpc('backup_list');
+  if (error) throw new Error(error.message);
+  return (data as BackupRun[]) || [];
+}
+
+export async function backupNow(): Promise<void> {
+  const { error } = await supabase.rpc('backup_now');
+  if (error) throw new Error(error.message);
+}
+
+export async function downloadBackup(run: BackupRun): Promise<void> {
+  const { data, error } = await supabase.rpc('backup_download', { p_run: run.id });
+  if (error || !data) throw new Error(error?.message || 'Copia no encontrada');
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Copia_Bandiera_${run.at.slice(0, 10)}_${run.id}.json`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
 // Whether the signed-in account may open the register.
 export function useAuditViewer(accountKey?: string | null): boolean {
   const [allowed, setAllowed] = useState(false);

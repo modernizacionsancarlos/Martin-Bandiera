@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, Download, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { ChevronDown, DatabaseBackup, Download, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { AuditAccess, AuditRow, describeDevice, listAccess, listAudit } from '../services/auditLog';
+import { AuditAccess, AuditRow, BackupRun, backupNow, describeDevice, downloadBackup, listAccess, listAudit, listBackups } from '../services/auditLog';
 import { todayLocalISO } from '../utils/dateUtils';
 
 const ACTIONS: Record<string, { label: string; tone: string }> = {
@@ -58,7 +58,9 @@ const changesOf = (r: AuditRow): [string, { antes: unknown; despues: unknown }][
 
 // Logins and changes of every user. The database only answers to the account set as viewer.
 export const AuditControlView: React.FC = () => {
-  const [tab, setTab] = useState<'movimientos' | 'usuarios'>('movimientos');
+  const [tab, setTab] = useState<'movimientos' | 'usuarios' | 'copias'>('movimientos');
+  const [backups, setBackups] = useState<BackupRun[] | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [actors, setActors] = useState<string[]>([]);
   const [access, setAccess] = useState<AuditAccess[]>([]);
@@ -95,6 +97,26 @@ export const AuditControlView: React.FC = () => {
     const t = setTimeout(() => void load(), 300);
     return () => clearTimeout(t);
   }, [load]);
+
+  const runBackupTask = async (task: () => Promise<void>, failure: string) => {
+    setBackupBusy(true);
+    setError(null);
+    try {
+      await task();
+      setBackups(await listBackups());
+    } catch {
+      setError(failure);
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    listBackups().then(setBackups).catch(() => setBackups(null));
+  }, []);
+
+  // The copy runs every night: a day and a half without one means it stopped.
+  const backupLate = backups !== null && (backups.length === 0 || Date.now() - new Date(backups[0].at).getTime() > 36 * 3600 * 1000);
 
   const exportExcel = () => {
     const sheet = XLSX.utils.json_to_sheet(
@@ -141,7 +163,8 @@ export const AuditControlView: React.FC = () => {
         <div className="flex gap-1.5" role="tablist" aria-label="Vista">
           {([
             ['movimientos', 'Movimientos'],
-            ['usuarios', `Usuarios (${access.length})`]
+            ['usuarios', `Usuarios (${access.length})`],
+            ['copias', 'Copias']
           ] as const).map(([value, label]) => (
             <button
               key={value}
@@ -184,7 +207,46 @@ export const AuditControlView: React.FC = () => {
         <p role="alert" className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold">{error}</p>
       )}
 
-      {tab === 'movimientos' ? (
+      {backupLate && (
+        <p role="alert" className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 text-xs font-bold">
+          No hay copia de seguridad de las últimas 36 horas. Haga una en la solapa Copias y avise a soporte.
+        </p>
+      )}
+
+      {tab === 'copias' ? (
+        <div className="space-y-2">
+          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-slate-600 dark:text-slate-300 max-w-xl">
+              Se hace una copia cada noche a las 3:00 y se guardan 90 días. Las copias están dentro de Supabase: descargue una cada tanto y guárdela fuera.
+            </p>
+            <button
+              type="button"
+              disabled={backupBusy}
+              onClick={() => void runBackupTask(backupNow, 'No se pudo hacer la copia. Intente de nuevo.')}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs font-bold cursor-pointer"
+            >
+              <DatabaseBackup className="w-3.5 h-3.5" /> {backupBusy ? 'Trabajando…' : 'Hacer copia ahora'}
+            </button>
+          </div>
+          <ul className="space-y-1.5">
+            {(backups || []).map(b => (
+              <li key={b.id} className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <span className="text-slate-800 dark:text-slate-100">
+                  <strong>{when(b.at)}</strong> · {b.kind === 'manual' ? 'manual' : 'automática'} · {b.documents} documentos, {b.remitos} remitos
+                </span>
+                <button
+                  type="button"
+                  disabled={backupBusy}
+                  onClick={() => void runBackupTask(() => downloadBackup(b), 'No se pudo descargar la copia.')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" /> Descargar
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : tab === 'movimientos' ? (
         <>
           {!loading && rows.length === 0 && !error && (
             <p className="p-8 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-center text-sm text-slate-500 dark:text-slate-400">

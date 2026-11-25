@@ -257,7 +257,7 @@ const AppContent: React.FC = () => {
                 onOpenFirebaseModal={() => setShowFirebaseModal(true)}
                 onOpenResetModal={() => setShowResetModal(true)}
                 onOpenImportExcel={() => setShowExcelModal(true)}
-        canAudit={auditViewer}
+                canReset={auditViewer}
               />
             ) : (
               <AccessDeniedNotice
@@ -572,7 +572,7 @@ const AppContent: React.FC = () => {
       />
 
       <ResetSystemModal
-        isOpen={showResetModal}
+        isOpen={showResetModal && auditViewer}
         onClose={() => setShowResetModal(false)}
       />
 

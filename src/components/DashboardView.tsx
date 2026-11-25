@@ -27,6 +27,7 @@ interface DashboardViewProps {
   onOpenFirebaseModal?: () => void;
   onOpenResetModal?: () => void;
   onOpenImportExcel?: () => void;
+  canReset?: boolean;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -35,7 +36,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenNewReport = () => {},
   onOpenFirebaseModal = () => {},
   onOpenResetModal = () => {},
-  onOpenImportExcel = () => {}
+  onOpenImportExcel = () => {},
+  canReset = false
 }) => {
   const onNavigate = (tab: string) => {
     if (propOnNavigate) {
@@ -45,7 +47,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
   const { projects, maintenanceServices, materials, workers, canViewFinancials } = useData();
-  const { currentUser, isCapataz, isEmpleado, canResetSystem } = useAuth();
+  const { currentUser, isCapataz, isEmpleado } = useAuth();
   const { themeClasses } = useTheme();
 
   const activeProjectsCount = projects.filter(p => p.status === 'En Ejecución').length;
@@ -217,19 +219,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ADMINISTRACIÓN Y MIGRACIÓN DE BASES DE DATOS
           </div>
           <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
-            Poner el Sistema en 0 & Importar Bases de Datos Excel
+            {canReset ? 'Poner el Sistema en 0 & Importar Bases de Datos Excel' : 'Importar Bases de Datos Excel'}
           </h2>
           <p className="text-xs sm:text-sm text-slate-300 mt-1 max-w-2xl font-medium">
-            Deje todos los módulos en 0 (clientes, auditoría técnica, facturado, pasado, cobrado, comprobantes y liquidaciones) con un solo botón para importar sus archivos Excel (.xlsx) limpios.
+            {canReset
+              ? 'Vaciar el sistema pide escribir una confirmación y hace antes una copia de seguridad. Solo su usuario puede hacerlo.'
+              : 'Cargue clientes, materiales o remitos desde archivos Excel (.xlsx).'}
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 shrink-0">
-          {canResetSystem && (
+          {canReset && (
             <button
               onClick={onOpenResetModal}
               className="flex items-center gap-2 px-5 py-3 rounded-2xl text-xs font-black bg-rose-600 hover:bg-rose-500 text-white transition-all shadow-lg shadow-rose-600/30 cursor-pointer active:scale-98"
-              title="Poner en 0 todos los módulos del sistema en un solo clic"
+              title="Poner en 0 los módulos del sistema (pide confirmación)"
             >
               <Trash2 className="w-4 h-4" />
               <span>PONER SISTEMA EN 0</span>

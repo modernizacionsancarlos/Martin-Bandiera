@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   AlertTriangle,
   RotateCcw,
@@ -14,6 +14,9 @@ import {
   Sparkles
 } from 'lucide-react';
 import { useData } from '../context/DataContext';
+import { backupNow } from '../services/auditLog';
+
+const CONFIRM_TEXT = 'PONER EN 0';
 
 interface ResetSystemModalProps {
   isOpen: boolean;
@@ -45,9 +48,37 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
 
   const [confirmInput, setConfirmInput] = useState('');
   const [isSuccessMessage, setIsSuccessMessage] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [actionDone, setActionDone] = useState<'cleared' | 'restored' | 'demo_cleared' | null>(null);
 
+  const confirmed = confirmInput.trim().toUpperCase() === CONFIRM_TEXT;
+
+  useEffect(() => {
+    if (isOpen) {
+      setConfirmInput('');
+      setError(null);
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  // Nothing is emptied without the typed confirmation and a fresh backup.
+  const guarded = async (action: () => void | Promise<void>) => {
+    if (!confirmed || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await backupNow();
+    } catch {
+      setError('No se pudo hacer la copia de seguridad previa. No se borró nada.');
+      setBusy(false);
+      return;
+    }
+    await action();
+    setConfirmInput('');
+    setBusy(false);
+  };
 
   const handleSelectAll = (val: boolean) => {
     setClearAudits(val);
@@ -82,7 +113,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
       clearClients,
       clearMaterials,
       clearReceipts,
-      clearFinancials
+      clearFinancials,
+      clearVehicles: false
     });
 
     setActionDone('cleared');
@@ -172,21 +204,39 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
                   Poner Todo el Sistema en 0
                 </h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                  Vacíe todos los datos del sistema con un solo clic para comenzar la carga real de su empresa mediante importación de archivos Excel sin datos de prueba demo.
+                  Borra los datos de todos los usuarios. Antes se hace una copia de seguridad. Solo su usuario puede hacerlo.
                 </p>
               </div>
             </div>
 
-            {/* ONE-CLICK PRIMARY ACTION CARD */}
+            {/* Typed confirmation, required by every action below */}
+            <div className="space-y-1.5">
+              <label htmlFor="reset-confirm" className="block text-xs font-bold text-slate-700 dark:text-slate-200">
+                Para habilitar los botones escriba {CONFIRM_TEXT}
+              </label>
+              <input
+                id="reset-confirm"
+                value={confirmInput}
+                onChange={e => setConfirmInput(e.target.value)}
+                autoComplete="off"
+                placeholder={CONFIRM_TEXT}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm font-mono text-slate-900 dark:text-white"
+              />
+              {error && (
+                <p role="alert" className="text-xs font-bold text-rose-600 dark:text-rose-400">{error}</p>
+              )}
+            </div>
+
+            {/* PRIMARY ACTION CARD */}
             <div className="p-5 rounded-2xl bg-gradient-to-br from-rose-500/10 via-rose-500/5 to-transparent border-2 border-rose-500/30 dark:border-rose-500/40 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="text-sm font-black text-rose-700 dark:text-rose-400 uppercase tracking-wide flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4" />
-                    Un Solo Botón: Reinicio Completo a 0
+                    Reinicio Completo a 0
                   </h4>
                   <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
-                    Pone en 0 todos los módulos simultáneamente en un solo clic:
+                    Vacía todos estos módulos y también los vehículos:
                   </p>
                 </div>
               </div>
@@ -246,11 +296,12 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
               {/* The Big One-Click Button */}
               <button
                 type="button"
-                onClick={handleResetAllToZero}
-                className="w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl text-sm font-black text-white bg-rose-600 hover:bg-rose-500 active:scale-98 transition shadow-lg shadow-rose-600/30 cursor-pointer"
+                onClick={() => void guarded(handleResetAllToZero)}
+                disabled={!confirmed || busy}
+                className="disabled:opacity-40 disabled:cursor-not-allowed w-full flex items-center justify-center gap-2.5 py-3.5 px-6 rounded-2xl text-sm font-black text-white bg-rose-600 hover:bg-rose-500 active:scale-98 transition shadow-lg shadow-rose-600/30 cursor-pointer"
               >
                 <Trash2 className="w-5 h-5" />
-                <span>PONER TODO EL SISTEMA EN 0 (1 SOLO CLIC)</span>
+                <span>{busy ? 'HACIENDO COPIA…' : 'PONER TODO EL SISTEMA EN 0'}</span>
               </button>
             </div>
 
@@ -379,8 +430,8 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
               <div className="pt-2 flex justify-end">
                 <button
                   type="button"
-                  onClick={handleExecuteClear}
-                  disabled={!clearAudits && !clearClients && !clearMaterials && !clearReceipts && !clearFinancials}
+                  onClick={() => void guarded(handleExecuteClear)}
+                  disabled={!confirmed || busy || (!clearAudits && !clearClients && !clearMaterials && !clearReceipts && !clearFinancials)}
                   className="px-4 py-2 rounded-xl text-xs font-bold text-rose-600 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 disabled:opacity-50 transition cursor-pointer"
                 >
                   Vaciar Solo Módulos Marcados
@@ -401,8 +452,9 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={handleClearDemoOnly}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 transition cursor-pointer"
+                  onClick={() => void guarded(handleClearDemoOnly)}
+                  disabled={!confirmed || busy}
+                  className="disabled:opacity-40 inline-flex items-center gap-1.5 text-xs font-bold text-amber-600 dark:text-amber-400 hover:text-amber-500 transition cursor-pointer"
                   title="Elimina solo los remitos y datos de ejemplo iniciales (AUD-376 a 363)"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
@@ -411,8 +463,9 @@ export const ResetSystemModal: React.FC<ResetSystemModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={handleRestoreDemoData}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:text-cyan-500 transition cursor-pointer"
+                  onClick={() => void guarded(handleRestoreDemoData)}
+                  disabled={!confirmed || busy}
+                  className="disabled:opacity-40 inline-flex items-center gap-1.5 text-xs font-bold text-cyan-600 dark:text-cyan-400 hover:text-cyan-500 transition cursor-pointer"
                   title="Recarga los datos de ejemplo iniciales"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />

@@ -194,12 +194,6 @@ export const PERMISSION_DEFINITIONS: {
     label: 'Gestión de Usuarios y Roles',
     category: 'Configuración y Sistema',
     description: 'Crear, editar, suspender usuarios y modificar sus jerarquías de permisos.'
-  },
-  {
-    key: 'resetSystem',
-    label: 'Poner Todo el Sistema en 0',
-    category: 'Configuración y Sistema',
-    description: 'Permiso crítico para vaciar base de datos y preparar importaciones limpias.'
   }
 ];
 

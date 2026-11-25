@@ -6,7 +6,8 @@
 --   1. The account allowed to see the register:
 --        insert into private.audit_viewers select id from auth.users where email = '<account>';
 --   2. The vault secret "firestore_sync_token" and the pg_cron job "firestore-sync" ('0 */3 * * *'), which calls
---      the edge function with that secret in the x-sync-token header (only while the old system is in use).
+--      the edge function with that secret in the x-sync-token header. Off since 2026-11-25: the old system is closed.
+--   3. The nightly copy: select cron.schedule('daily-backup', '0 6 * * *', $cron$select private.run_backup('diaria')$cron$);
 
 set check_function_bodies = off;
 
@@ -1283,3 +1284,201 @@ begin
     alter publication supabase_realtime add table public.documents;
   end if;
 end $$;
+
+-- Daily copy of the data. Each run lists every document; contents are stored once per version.
+create table if not exists private.backup_runs (
+  id bigint generated always as identity primary key,
+  at timestamptz not null default now(),
+  kind text not null,
+  documents integer not null default 0
+);
+create table if not exists private.backup_data (
+  collection text not null,
+  id text not null,
+  hash text not null,
+  data jsonb not null,
+  primary key (collection, id, hash)
+);
+create table if not exists private.backup_items (
+  run_id bigint not null references private.backup_runs(id) on delete cascade,
+  collection text not null,
+  id text not null,
+  hash text not null,
+  primary key (run_id, collection, id)
+);
+create index if not exists backup_items_data_idx on private.backup_items (collection, id, hash);
+alter table private.backup_runs enable row level security;
+alter table private.backup_data enable row level security;
+alter table private.backup_items enable row level security;
+revoke all on table private.backup_runs, private.backup_data, private.backup_items from public, anon, authenticated, service_role;
+
+create or replace function private.run_backup(p_kind text)
+ returns bigint
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_run bigint;
+  v_count int;
+begin
+  perform pg_advisory_xact_lock(hashtext('private.run_backup'));
+  insert into private.backup_runs (kind) values (p_kind) returning id into v_run;
+
+  create temp table backup_source on commit drop as
+    select s.collection, s.id, md5(s.data::text) as hash, s.data
+      from (
+        select d.collection, d.id, d.data from documents d
+        union all
+        select '@papelera', t.trash_id::text, to_jsonb(t) from documents_trash t
+        union all
+        select '@cuentas', r.user_id::text, to_jsonb(r) from app_roles r
+      ) s;
+
+  insert into private.backup_data (collection, id, hash, data)
+  select collection, id, hash, data from backup_source
+  on conflict do nothing;
+  insert into private.backup_items (run_id, collection, id, hash)
+  select v_run, collection, id, hash from backup_source;
+  select count(*) into v_count from backup_source where collection not like '@%';
+  update private.backup_runs set documents = v_count where id = v_run;
+  drop table backup_source;
+
+  -- 90 days are kept, and always the last 30 copies.
+  delete from private.backup_runs r
+   where r.at < now() - interval '90 days'
+     and r.id not in (select id from private.backup_runs order by id desc limit 30);
+  delete from private.backup_data b
+   where not exists (select 1 from private.backup_items i where i.collection = b.collection and i.id = b.id and i.hash = b.hash);
+  return v_run;
+end;
+$function$;
+
+-- Puts back documents of a copy: all, one collection or one document. Nothing is deleted.
+-- Only from the SQL editor, for example: select private.restore_backup(12, 'auditRecords', null);
+create or replace function private.restore_backup(p_run bigint, p_collection text default null, p_id text default null)
+ returns integer
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_count int;
+begin
+  insert into documents as d (collection, id, data)
+  select b.collection, b.id, case when b.collection = 'auditRecords' then b.data || '{"keepRemitoNumber": true}'::jsonb else b.data end
+    from private.backup_items i
+    join private.backup_data b on b.collection = i.collection and b.id = i.id and b.hash = i.hash
+   where i.run_id = p_run and b.collection not like '@%'
+     and (p_collection is null or b.collection = p_collection)
+     and (p_id is null or b.id = p_id)
+  on conflict (collection, id) do update set data = excluded.data - 'keepRemitoNumber'
+   where d.data is distinct from excluded.data - 'keepRemitoNumber';
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$function$;
+
+create or replace function public.backup_now()
+ returns bigint
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+begin
+  if not private.is_audit_viewer() then
+    raise exception 'permission denied' using errcode = '42501';
+  end if;
+  return private.run_backup('manual');
+end;
+$function$;
+
+create or replace function public.backup_list()
+ returns jsonb
+ language plpgsql
+ stable security definer
+ set search_path to 'public'
+as $function$
+begin
+  if not private.is_audit_viewer() then
+    raise exception 'permission denied' using errcode = '42501';
+  end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('id', r.id, 'at', r.at, 'kind', r.kind, 'documents', r.documents,
+             'remitos', (select count(*) from private.backup_items i where i.run_id = r.id and i.collection = 'auditRecords')) order by r.id desc)
+      from (select * from private.backup_runs order by id desc limit 100) r), '[]'::jsonb);
+end;
+$function$;
+
+create or replace function public.backup_download(p_run bigint)
+ returns jsonb
+ language plpgsql
+ stable security definer
+ set search_path to 'public'
+as $function$
+begin
+  if not private.is_audit_viewer() then
+    raise exception 'permission denied' using errcode = '42501';
+  end if;
+  return (
+    select jsonb_build_object('id', r.id, 'at', r.at, 'kind', r.kind, 'collections', (
+             select jsonb_object_agg(c.collection, c.docs) from (
+               select b.collection, jsonb_object_agg(b.id, b.data) docs
+                 from private.backup_items i
+                 join private.backup_data b on b.collection = i.collection and b.id = i.id and b.hash = i.hash
+                where i.run_id = r.id group by b.collection) c))
+      from private.backup_runs r where r.id = p_run);
+end;
+$function$;
+
+-- Only the holder account may set the system to zero or delete in bulk.
+create or replace function private.guard_zero_state()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+begin
+  if new.collection = 'systemSettings' and new.data->>'isZeroState' = 'true'
+     and auth.uid() is not null and not private.is_audit_viewer()
+     and not exists (select 1 from documents where collection = new.collection and id = new.id and data->>'isZeroState' = 'true') then
+    raise exception 'Solo la cuenta titular puede poner el sistema en 0' using errcode = '42501';
+  end if;
+  return new;
+end;
+$function$;
+
+create or replace function private.guard_mass_delete()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_now int;
+  v_recent int;
+begin
+  if auth.uid() is null or private.is_audit_viewer() then
+    return null;
+  end if;
+  select count(*) into v_now from gone;
+  select count(*) into v_recent from audit_log
+   where actor = (select email from auth.users where id = auth.uid())
+     and action = 'borrar' and at > now() - interval '10 minutes';
+  if greatest(v_now, v_recent) > 40 then
+    raise exception 'Borrado masivo bloqueado: solo la cuenta titular puede borrar mas de 40 elementos en 10 minutos' using errcode = '42501';
+  end if;
+  return null;
+end;
+$function$;
+
+drop trigger if exists documents_guard_zero on public.documents;
+create trigger documents_guard_zero before insert or update on public.documents for each row execute function private.guard_zero_state();
+
+drop trigger if exists documents_guard_mass_delete on public.documents;
+create trigger documents_guard_mass_delete after delete on public.documents referencing old table as gone for each statement execute function private.guard_mass_delete();
+
+revoke truncate on table public.documents, public.app_roles from anon, authenticated;
+revoke all on function private.run_backup(text), private.restore_backup(bigint, text, text), private.guard_zero_state(), private.guard_mass_delete() from public, anon, authenticated, service_role;
+revoke all on function public.backup_now(), public.backup_list(), public.backup_download(bigint) from public, anon, authenticated, service_role;
+grant execute on function public.backup_now(), public.backup_list(), public.backup_download(bigint) to authenticated;
