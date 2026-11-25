@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useData } from '../context/DataContext';
 import { UserProfile, UserRole } from '../types';
+import { confirmRestore, useAuditViewer } from '../services/auditLog';
 import {
   Database,
   Table,
@@ -146,6 +147,7 @@ export const DatabaseConsoleView: React.FC = () => {
     updateUser,
     deleteUser,
     replaceUsersList,
+    isPreviewingOtherUser,
     loginAsUser
   } = useAuth();
 
@@ -161,6 +163,9 @@ export const DatabaseConsoleView: React.FC = () => {
     financialReports,
     updateTechnicalParameters
   } = useData();
+
+  // Importing overwrites users: only the holder account.
+  const canRestore = useAuditViewer(isPreviewingOtherUser ? null : currentUser?.email);
 
   // Navigation and view modes
   const [selectedTable, setSelectedTable] = useState<DatabaseTableKey>('users');
@@ -391,9 +396,11 @@ export const DatabaseConsoleView: React.FC = () => {
   };
 
   // Import / Restore Database
-  const handleImportDatabase = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportDatabase = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = '';
+    if (!file || !canRestore) return;
+    if (!(await confirmRestore('Se van a reemplazar los usuarios por los del archivo.'))) return;
 
     const reader = new FileReader();
     reader.onload = event => {
@@ -416,7 +423,6 @@ export const DatabaseConsoleView: React.FC = () => {
       }
     };
     reader.readAsText(file);
-    e.target.value = '';
   };
 
   const selectedTableDef = TABLES.find(t => t.key === selectedTable)!;
@@ -464,6 +470,7 @@ export const DatabaseConsoleView: React.FC = () => {
 
           {/* Backup & Fast Actions */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {canRestore && (
             <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold transition">
               <Upload className="w-4 h-4 text-cyan-400" />
               <span>Importar BD</span>
@@ -474,6 +481,7 @@ export const DatabaseConsoleView: React.FC = () => {
                 className="hidden"
               />
             </label>
+            )}
 
             <button
               onClick={handleExportFullDatabase}

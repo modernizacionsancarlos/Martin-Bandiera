@@ -3,6 +3,7 @@ import { Database, Download, Upload, RefreshCw, CheckCircle2, AlertTriangle, Shi
 import { useData } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { todayLocalISO } from '../utils/dateUtils';
+import { confirmRestore, useAuditViewer } from '../services/auditLog';
 
 export const MasterBackupView: React.FC = () => {
   const {
@@ -20,7 +21,9 @@ export const MasterBackupView: React.FC = () => {
     resetAllData
   } = useData();
 
-  const { firebaseConfig, users, resetUsersToDefaults } = useAuth();
+  const { firebaseConfig, users, resetUsersToDefaults, currentUser, isPreviewingOtherUser } = useAuth();
+  // Restoring overwrites users and data: only the holder account.
+  const canRestore = useAuditViewer(isPreviewingOtherUser ? null : currentUser?.email);
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced'>('idle');
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState<{ timestamp: string; dateFormatted: string; recordCount: number } | null>(null);
@@ -85,7 +88,8 @@ export const MasterBackupView: React.FC = () => {
   };
 
   // Restore the saved snapshot from browser storage
-  const handleRestoreSnapshot = () => {
+  const handleRestoreSnapshot = async () => {
+    if (!canRestore || !(await confirmRestore('Se van a reemplazar los usuarios por los de la lista inicial y los datos de este navegador.'))) return;
     try {
       const existing = localStorage.getItem('job_martin_bandiera_restore_point_snapshot');
       if (!existing) {
@@ -129,7 +133,8 @@ export const MasterBackupView: React.FC = () => {
   };
 
   // Restore canonical stable state (users + access + zero locks)
-  const handleRestoreCanonicalPoint = () => {
+  const handleRestoreCanonicalPoint = async () => {
+    if (!canRestore || !(await confirmRestore('Se van a reemplazar los usuarios por los de la lista inicial.'))) return;
     try {
       resetUsersToDefaults();
       setFeedbackMessage({
@@ -176,9 +181,11 @@ export const MasterBackupView: React.FC = () => {
   };
 
   // Import JSON file
-  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportJSON = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    e.target.value = '';
+    if (!file || !canRestore) return;
+    if (!(await confirmRestore('Se van a reemplazar los datos guardados en este navegador.'))) return;
 
     const reader = new FileReader();
     reader.onload = event => {
@@ -269,6 +276,7 @@ export const MasterBackupView: React.FC = () => {
       )}
 
       {/* Main Restore Point Hero Card */}
+      {canRestore && (
       <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950 text-white p-6 rounded-3xl border border-slate-800 shadow-xl relative overflow-hidden">
         <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
           <RotateCcw className="w-48 h-48" />
@@ -345,6 +353,7 @@ export const MasterBackupView: React.FC = () => {
           </div>
         </div>
       </div>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {/* Card 1: Export JSON */}
@@ -386,6 +395,7 @@ export const MasterBackupView: React.FC = () => {
         </div>
 
         {/* Card 2: Import Backup */}
+        {canRestore && (
         <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">
           <div className="space-y-2">
             <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
@@ -416,6 +426,8 @@ export const MasterBackupView: React.FC = () => {
             <input type="file" accept=".json" onChange={handleImportJSON} className="hidden" />
           </label>
         </div>
+
+        )}
 
         {/* Card 3: Cloud Firestore Sync */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between space-y-4">

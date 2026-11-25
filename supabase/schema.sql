@@ -1482,3 +1482,48 @@ revoke truncate on table public.documents, public.app_roles from anon, authentic
 revoke all on function private.run_backup(text), private.restore_backup(bigint, text, text), private.guard_zero_state(), private.guard_mass_delete() from public, anon, authenticated, service_role;
 revoke all on function public.backup_now(), public.backup_list(), public.backup_download(bigint) from public, anon, authenticated, service_role;
 grant execute on function public.backup_now(), public.backup_list(), public.backup_download(bigint) to authenticated;
+
+-- Only the holder account may overwrite users or staff in bulk.
+create or replace function private.guard_mass_users()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_now int;
+  v_recent int;
+begin
+  if auth.uid() is null or private.is_audit_viewer() then
+    return null;
+  end if;
+  if tg_op = 'INSERT' then
+    select coalesce(max(n), 0) into v_now from (
+      select count(*) n from neu where collection in ('users', 'workers') group by collection) c;
+  else
+    select coalesce(max(n), 0) into v_now from (
+      select count(*) n from neu join prev using (collection, id)
+       where collection in ('users', 'workers') and neu.data is distinct from prev.data group by collection) c;
+  end if;
+  if v_now = 0 then
+    return null;
+  end if;
+  select coalesce(max(n), 0) into v_recent from (
+    select count(distinct doc_id) n from audit_log
+     where actor = (select email from auth.users where id = auth.uid())
+       and action in ('crear', 'editar') and collection in ('users', 'workers')
+       and at > now() - interval '2 minutes'
+     group by collection) c;
+  if greatest(v_now, v_recent) > 8 then
+    raise exception 'Cambio masivo de usuarios bloqueado: solo la cuenta titular puede cambiar mas de 8 en 2 minutos' using errcode = '42501';
+  end if;
+  return null;
+end;
+$function$;
+
+drop trigger if exists documents_guard_users_insert on public.documents;
+create trigger documents_guard_users_insert after insert on public.documents referencing new table as neu for each statement execute function private.guard_mass_users();
+drop trigger if exists documents_guard_users_update on public.documents;
+create trigger documents_guard_users_update after update on public.documents referencing old table as prev new table as neu for each statement execute function private.guard_mass_users();
+
+revoke all on function private.guard_mass_users() from public, anon, authenticated, service_role;

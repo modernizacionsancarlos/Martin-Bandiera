@@ -84,6 +84,18 @@ export async function backupNow(): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Asked before anything that overwrites users or data: confirmation plus a fresh backup.
+export async function confirmRestore(message: string): Promise<boolean> {
+  if (!window.confirm(`${message}\n\nAntes se hace una copia de seguridad. ¿Continuar?`)) return false;
+  try {
+    await backupNow();
+    return true;
+  } catch {
+    window.alert('No se pudo hacer la copia de seguridad previa. No se cambió nada.');
+    return false;
+  }
+}
+
 export async function downloadBackup(run: BackupRun): Promise<void> {
   const { data, error } = await supabase.rpc('backup_download', { p_run: run.id });
   if (error || !data) throw new Error(error?.message || 'Copia no encontrada');
