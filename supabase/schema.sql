@@ -656,11 +656,22 @@ CREATE OR REPLACE FUNCTION public.purge_trash_item(p_trash_id uuid)
  SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
+declare
+  v_row documents_trash%rowtype;
 begin
   if not private.is_superadmin() then
     raise exception 'permission denied' using errcode = '42501';
   end if;
-  delete from documents_trash where trash_id = p_trash_id;
+  delete from documents_trash where trash_id = p_trash_id returning * into v_row;
+  if not found then
+    return;
+  end if;
+  -- Without a trace there is no permanent deletion: an error here cancels it.
+  perform private.audit_write('borrar', v_row.collection, v_row.doc_id,
+    coalesce(v_row.data->>'remitoId', v_row.data->>'receiptNumber', v_row.data->>'razonSocial', v_row.data->>'name', v_row.doc_id),
+    'Borrado definitivo de la Papelera · ' || left(coalesce(v_row.data->>'clientName', v_row.data->>'fincaLocacion', ''), 120)
+      || case when v_row.collection = 'auditRecords' then ' · ' || coalesce(v_row.data->>'status', '') || ' · $' || coalesce(v_row.data->>'billedPrice', '0') else '' end,
+    null);
 end;
 $function$;
 
@@ -872,10 +883,10 @@ declare
   v_role text;
 begin
   if v_actor is null and v_uid is not null then
-    select email, role into v_actor, v_role from app_roles where user_id = v_uid;
-    v_actor := coalesce(v_actor, (select email from auth.users where id = v_uid), v_uid::text);
+    v_actor := coalesce((select email from auth.users where id = v_uid), v_uid::text);
+    select role into v_role from app_roles where user_id = v_uid;
   elsif v_actor is not null then
-    select role into v_role from app_roles where email = v_actor;
+    select r.role into v_role from app_roles r join auth.users u on u.id = r.user_id where u.email = v_actor;
   end if;
   if v_actor is null then
     v_actor := case when coalesce(auth.role(), '') = 'service_role' then 'Copia automática' else 'Sistema' end;
@@ -966,8 +977,14 @@ begin
       perform private.audit_write('cuenta_creada', 'cuenta', new.id::text, new.email, null, null);
     elsif tg_op = 'DELETE' then
       perform private.audit_write('cuenta_borrada', 'cuenta', old.id::text, old.email, null, null);
-    elsif new.encrypted_password is distinct from old.encrypted_password then
-      perform private.audit_write('cambio_clave', 'cuenta', new.id::text, new.email, null, null);
+    else
+      if new.encrypted_password is distinct from old.encrypted_password then
+        perform private.audit_write('cambio_clave', 'cuenta', new.id::text, new.email, null, null);
+      end if;
+      if new.email is distinct from old.email then
+        perform private.audit_write('cambio_rol', 'cuenta', new.id::text, old.email, 'Cambio de correo de ingreso',
+          jsonb_build_object('email', jsonb_build_object('antes', old.email, 'despues', new.email)));
+      end if;
     end if;
   exception when others then
     raise warning 'audit_accounts: %', sqlerrm;
@@ -982,11 +999,20 @@ CREATE OR REPLACE FUNCTION private.audit_roles()
  SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
+declare
+  v_old jsonb := case when tg_op = 'INSERT' then '{}'::jsonb else to_jsonb(old) end;
+  v_new jsonb := case when tg_op = 'DELETE' then '{}'::jsonb else to_jsonb(new) end;
+  v_changes jsonb;
 begin
   begin
-    if old.role is distinct from new.role then
-      perform private.audit_write('cambio_rol', 'cuenta', new.user_id::text, new.email, null,
-        jsonb_build_object('role', jsonb_build_object('antes', old.role, 'despues', new.role)));
+    select jsonb_object_agg(k, jsonb_build_object('antes', v_old->k, 'despues', v_new->k))
+      into v_changes
+      from unnest(array['email', 'role', 'profile_uid', 'user_id']) k
+     where (v_old->k) is distinct from (v_new->k);
+    if v_changes is not null then
+      perform private.audit_write('cambio_rol', 'cuenta', coalesce(v_old->>'user_id', v_new->>'user_id'),
+        coalesce(v_old->>'email', v_new->>'email'),
+        case tg_op when 'INSERT' then 'Permiso otorgado' when 'DELETE' then 'Permiso quitado' end, v_changes);
     end if;
   exception when others then
     raise warning 'audit_roles: %', sqlerrm;
@@ -1068,14 +1094,14 @@ begin
   end if;
   return coalesce((
     select jsonb_agg(jsonb_build_object(
-      'login', r.email, 'role', r.role, 'name', d.data->>'displayName',
+      'login', u.email, 'role', r.role, 'name', d.data->>'displayName',
       'mustChangePassword', r.must_change_password,
       'lastSignIn', u.last_sign_in_at,
-      'logins', (select count(*) from audit_log l where l.action = 'ingreso' and l.actor = r.email),
-      'changes', (select count(*) from audit_log l where l.actor = r.email and l.action in ('crear', 'editar', 'borrar')),
+      'logins', (select count(*) from audit_log l where l.action = 'ingreso' and l.actor = u.email),
+      'changes', (select count(*) from audit_log l where l.actor = u.email and l.action in ('crear', 'editar', 'borrar')),
       'sessions', coalesce((select jsonb_agg(jsonb_build_object('since', s.created_at, 'lastUse', coalesce(s.refreshed_at at time zone 'UTC', s.updated_at), 'ip', host(s.ip), 'device', s.user_agent) order by s.created_at desc)
                               from auth.sessions s where s.user_id = r.user_id), '[]'::jsonb)
-    ) order by u.last_sign_in_at desc nulls last, r.email)
+    ) order by u.last_sign_in_at desc nulls last, u.email)
     from app_roles r
     join auth.users u on u.id = r.user_id
     left join documents d on d.collection = 'users' and d.id = r.profile_uid), '[]'::jsonb);
@@ -1240,10 +1266,10 @@ drop trigger if exists sessions_audit on auth.sessions;
 CREATE TRIGGER sessions_audit AFTER INSERT OR DELETE ON auth.sessions FOR EACH ROW EXECUTE FUNCTION private.audit_sessions();
 
 drop trigger if exists users_audit on auth.users;
-CREATE TRIGGER users_audit AFTER INSERT OR DELETE OR UPDATE OF encrypted_password ON auth.users FOR EACH ROW EXECUTE FUNCTION private.audit_accounts();
+CREATE TRIGGER users_audit AFTER INSERT OR DELETE OR UPDATE OF encrypted_password, email ON auth.users FOR EACH ROW EXECUTE FUNCTION private.audit_accounts();
 
 drop trigger if exists app_roles_audit on public.app_roles;
-CREATE TRIGGER app_roles_audit AFTER UPDATE ON public.app_roles FOR EACH ROW EXECUTE FUNCTION private.audit_roles();
+CREATE TRIGGER app_roles_audit AFTER INSERT OR DELETE OR UPDATE ON public.app_roles FOR EACH ROW EXECUTE FUNCTION private.audit_roles();
 
 drop trigger if exists app_roles_protect_viewer on public.app_roles;
 CREATE TRIGGER app_roles_protect_viewer BEFORE DELETE OR UPDATE ON public.app_roles FOR EACH ROW EXECUTE FUNCTION private.protect_audit_viewer();
