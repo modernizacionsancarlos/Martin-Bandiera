@@ -23,11 +23,12 @@ import { useData } from '../context/DataContext';
 import { RemitoPasadoModal } from './RemitoPasadoModal';
 import { RemitoPasadoConsolidadoModal } from './RemitoPasadoConsolidadoModal';
 import { PaymentModal } from './PaymentModal';
+import { PasarAFacturadoModal } from './PasarAFacturadoModal';
 import { generateRemitoPasadoConsolidadoPDF } from '../utils/pdfGenerator';
 import { exportPasadosToExcel, exportRemitoPasadoSingleToExcel } from '../utils/excelParser';
 
 export const PasadoView: React.FC = () => {
-  const { technicalAuditRecords, updateTechnicalAuditRecord } = useData();
+  const { technicalAuditRecords, updateTechnicalAuditRecord, bulkPassToFacturado } = useData();
 
   // Search & Filter State
   const [searchTerm, setSearchTerm] = useState('');
@@ -35,6 +36,7 @@ export const PasadoView: React.FC = () => {
   const [selectedRecords, setSelectedRecords] = useState<string[]>([]);
 
   // Modals State
+  const [recordToInvoice, setRecordToInvoice] = useState<TechnicalAuditRecord | null>(null);
   const [selectedRecordForSingleModal, setSelectedRecordForSingleModal] = useState<TechnicalAuditRecord | null>(null);
   const [isSingleModalOpen, setIsSingleModalOpen] = useState(false);
 
@@ -148,7 +150,7 @@ export const PasadoView: React.FC = () => {
   };
 
   const handleMoveToFacturado = (id: string) => {
-    updateTechnicalAuditRecord(id, { status: 'Facturado', semaforo: 'naranja' });
+    setRecordToInvoice(pasados.find(r => r.id === id) || null);
   };
 
   const handleMoveToCargado = (id: string) => {
@@ -573,6 +575,19 @@ export const PasadoView: React.FC = () => {
           records={selectedRecordsData}
           onArchiveSuccess={() => {
             // Optional callback
+          }}
+        />
+      )}
+
+      {/* Pasar a Facturado: asks for the invoice number and date */}
+      {recordToInvoice && (
+        <PasarAFacturadoModal
+          isOpen
+          onClose={() => setRecordToInvoice(null)}
+          record={recordToInvoice}
+          allRecords={technicalAuditRecords}
+          onConfirm={async (recordIds, num, date, billing) => {
+            await bulkPassToFacturado(recordIds, num, date, billing);
           }}
         />
       )}

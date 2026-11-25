@@ -45,6 +45,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
 }) => {
   const { bulkAddTechnicalAuditRecords, bulkAddClients, bulkAddMaterials } = useData();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const committedRef = useRef<unknown>(null);
 
   const [activeTab, setActiveTab] = useState<'remitos' | 'clientes' | 'materiales'>(initialTab);
   const [isDragging, setIsDragging] = useState(false);
@@ -55,6 +56,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   const [parsedMaterialsData, setParsedMaterialsData] = useState<ExcelMaterialImportResult | null>(null);
   const [importSuccess, setImportSuccess] = useState(false);
   const [importedCount, setImportedCount] = useState(0);
+  const [importNote, setImportNote] = useState('');
   const [isDescRecoveryOpen, setIsDescRecoveryOpen] = useState(false);
 
   // Sync tab if initialTab changes or modal reopens
@@ -64,6 +66,9 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       handleReset();
     }
   }, [isOpen, initialTab]);
+
+  const importErrors =
+    (activeTab === 'materiales' ? parsedMaterialsData : activeTab === 'clientes' ? parsedClientsData : parsedData)?.errors || [];
 
   if (!isOpen) return null;
 
@@ -129,22 +134,29 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
   };
 
   const handleCommitImport = () => {
+    // The same file is imported once, even with a double click.
+    const source = activeTab === 'materiales' ? parsedMaterialsData : activeTab === 'clientes' ? parsedClientsData : parsedData;
+    if (!source || committedRef.current === source) return;
+    committedRef.current = source;
     if (activeTab === 'materiales') {
       if (!parsedMaterialsData || parsedMaterialsData.materials.length === 0) return;
-      bulkAddMaterials(parsedMaterialsData.materials);
-      setImportedCount(parsedMaterialsData.materials.length);
+      const result = bulkAddMaterials(parsedMaterialsData.materials);
+      setImportedCount(result.added + result.updated);
+      setImportNote(result.updated ? `${result.added} nuevos y ${result.updated} actualizados.` : '');
       setImportSuccess(true);
       if (onSuccess) onSuccess(parsedMaterialsData.materials.length);
     } else if (activeTab === 'clientes') {
       if (!parsedClientsData || parsedClientsData.clients.length === 0) return;
-      bulkAddClients(parsedClientsData.clients);
-      setImportedCount(parsedClientsData.clients.length);
+      const result = bulkAddClients(parsedClientsData.clients);
+      setImportedCount(result.added);
+      setImportNote(result.skipped ? `${result.skipped} ya existían y no se repitieron.` : '');
       setImportSuccess(true);
       if (onSuccess) onSuccess(parsedClientsData.clients.length);
     } else {
       if (!parsedData || parsedData.records.length === 0) return;
-      bulkAddTechnicalAuditRecords(parsedData.records);
-      setImportedCount(parsedData.records.length);
+      const result = bulkAddTechnicalAuditRecords(parsedData.records);
+      setImportedCount(result.added);
+      setImportNote(result.skipped ? `${result.skipped} ya existían y no se repitieron.` : '');
       setImportSuccess(true);
       if (onSuccess) onSuccess(parsedData.records.length);
     }
@@ -387,6 +399,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   : 'remitos'}{' '}
                 importados exitosamente!
               </h3>
+              {importNote && <p className="text-sm font-black text-amber-700 dark:text-amber-300">{importNote}</p>}
               <p className="text-xs text-emerald-700 dark:text-emerald-300 max-w-md mx-auto">
                 {activeTab === 'materiales'
                   ? 'El catálogo de inventario ha sido actualizado y sincronizado en la base de datos de Firestore. Los materiales ya están disponibles para cotizar y asociar a remitos.'
@@ -395,6 +408,14 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   : 'Los remitos han sido integrados al sistema con sus cálculos de costos, materiales, retenciones y estados actualizados.'}
               </p>
             </div>
+          )}
+
+          {!importSuccess && importErrors.length > 0 && (
+            <ul role="alert" className="p-3 rounded-2xl bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 text-xs font-bold space-y-1 max-h-32 overflow-y-auto">
+              {importErrors.slice(0, 50).map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
           )}
 
           {/* Parsed Materiales Preview Table */}
@@ -586,7 +607,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                       {parsedData.records.slice(0, 15).map((r, i) => (
                         <tr key={i} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
                           <td className="p-2.5 font-mono font-bold text-slate-900 dark:text-white">
-                            {r.remitoId}
+                            {r.remitoId || 'Automático'}
                           </td>
                           <td className="p-2.5 text-slate-500">{r.date}</td>
                           <td className="p-2.5 font-bold text-slate-900 dark:text-white truncate max-w-[140px]">

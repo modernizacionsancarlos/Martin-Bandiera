@@ -30,6 +30,11 @@ export const ClientesView: React.FC<ClientesViewProps> = ({ onOpenImportExcel })
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedClientToEdit, setSelectedClientToEdit] = useState<ClientItem | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // A double click must not create the client twice.
+  const submittedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (isModalOpen) submittedRef.current = false;
+  }, [isModalOpen]);
   const [clientToDelete, setClientToDelete] = useState<ClientItem | null>(null);
 
   // Form State
@@ -109,6 +114,8 @@ export const ClientesView: React.FC<ClientesViewProps> = ({ onOpenImportExcel })
       return;
     }
 
+    if (submittedRef.current) return;
+    submittedRef.current = true;
     if (selectedClientToEdit) {
       updateClient(selectedClientToEdit.id, formData);
     } else {

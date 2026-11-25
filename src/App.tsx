@@ -14,6 +14,8 @@ import { PasadoView } from './components/PasadoView';
 import { CobradoView } from './components/CobradoView';
 import { ArchivoComprobantesView } from './components/ArchivoComprobantesView';
 import { TrashView } from './components/TrashView';
+import { AuditControlView } from './components/AuditControlView';
+import { useAuditViewer } from './services/auditLog';
 import { ClientesView } from './components/ClientesView';
 import { FixedCostBanner } from './components/FixedCostBanner';
 import { TechnicalAuditTable } from './components/TechnicalAuditTable';
@@ -70,7 +72,8 @@ const AccessDeniedNotice: React.FC<AccessDeniedNoticeProps> = ({
 );
 
 const AppContent: React.FC = () => {
-  const { isAuthenticated, currentUser, permissions, authReady, mustChangePassword } = useAuth();
+  const { isAuthenticated, currentUser, permissions, authReady, mustChangePassword, isPreviewingOtherUser } = useAuth();
+  const auditViewer = useAuditViewer(isAuthenticated && !isPreviewingOtherUser ? currentUser?.email : null);
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
   const [showFieldReportModal, setShowFieldReportModal] = useState(false);
@@ -170,6 +173,7 @@ const AppContent: React.FC = () => {
         onOpenFirebaseModal={() => setShowFirebaseModal(true)}
         onOpenResetModal={() => setShowResetModal(true)}
         onOpenImportExcel={() => setShowExcelModal(true)}
+        canAudit={auditViewer}
       />
 
       {/* Main Content Area */}
@@ -253,6 +257,7 @@ const AppContent: React.FC = () => {
                 onOpenFirebaseModal={() => setShowFirebaseModal(true)}
                 onOpenResetModal={() => setShowResetModal(true)}
                 onOpenImportExcel={() => setShowExcelModal(true)}
+        canAudit={auditViewer}
               />
             ) : (
               <AccessDeniedNotice
@@ -338,6 +343,9 @@ const AppContent: React.FC = () => {
               />
             )
           )}
+
+          {/* SOLAPA: CONTROL DE ACCESOS Y CAMBIOS */}
+          {activeTab === 'control' && auditViewer && <AuditControlView />}
 
           {/* SOLAPA: ARCHIVO DE COMPROBANTES */}
           {activeTab === 'archivo' && (

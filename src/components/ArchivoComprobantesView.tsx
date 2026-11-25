@@ -16,12 +16,12 @@ import {
   Eye,
   X
 } from 'lucide-react';
-import { ArchivedReceipt } from '../types';
+import { ArchivedReceipt, TechnicalAuditRecord } from '../types';
 import { useData } from '../context/DataContext';
-import { generateReciboCobroPDF, generateRemitoPasadoPDF } from '../utils/pdfGenerator';
+import { generateReciboCobroPDF, generateRemitoPasadoPDF, generateRemitoPasadoConsolidadoPDF } from '../utils/pdfGenerator';
 
 export const ArchivoComprobantesView: React.FC = () => {
-  const { archivedReceipts, deleteArchivedReceipt } = useData();
+  const { archivedReceipts, deleteArchivedReceipt, technicalAuditRecords } = useData();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<'ALL' | 'RECIBO_COBRADO' | 'REMITO_PASADO'>('ALL');
@@ -65,14 +65,33 @@ export const ArchivoComprobantesView: React.FC = () => {
         notes: receipt.notes
       });
     } else {
+      // The real remitos, as long as they still add up to what was archived.
+      const originals = receipt.remitoIds
+        .map(id => technicalAuditRecords.find(r => r.remitoId === id))
+        .filter((r): r is TechnicalAuditRecord => !!r);
+      const currentTotal = originals.reduce((acc, r) => acc + (r.billedPrice > 0 ? r.billedPrice : r.suggestedPrice || 0), 0);
+      if (originals.length === receipt.remitoIds.length && Math.abs(currentTotal - receipt.totalAmount) <= 1) {
+        if (originals.length === 1) {
+          generateRemitoPasadoPDF(originals[0]);
+        } else {
+          generateRemitoPasadoConsolidadoPDF({
+            receiptNumber: receipt.receiptNumber,
+            date: receipt.date,
+            clientName: receipt.clientName,
+            records: originals
+          });
+        }
+        return;
+      }
+      // Prices or remitos changed since then: print the archived total, without inventing data.
       generateRemitoPasadoPDF({
         id: receipt.id,
-        remitoId: receipt.remitoIds[0] || receipt.receiptNumber,
+        remitoId: receipt.remitoIds.length === 1 ? receipt.remitoIds[0] : receipt.receiptNumber,
         remitoPapel: '',
         date: receipt.date,
         clientName: receipt.clientName,
-        siteLocation: 'Valle de Uco / Mendoza',
-        workPoint: 'Trabajos ejecutados',
+        siteLocation: originals[0]?.siteLocation || '-',
+        workPoint: originals.length === 1 ? originals[0].workPoint : '-',
         isGuardia: false,
         hoursWorked: 0,
         travelHours: 0,
@@ -84,13 +103,13 @@ export const ArchivoComprobantesView: React.FC = () => {
         operatingCost: receipt.totalAmount,
         materialsCost: 0,
         materialsDetails: '',
-        description: receipt.notes || 'Comprobante archivado de Remito Pasado',
+        description: `${receipt.notes || 'Comprobante archivado de Remito Pasado'}. Remitos: ${receipt.remitoIds.join(', ')}`,
         suggestedPrice: receipt.totalAmount,
         billedPrice: receipt.totalAmount,
         collectedPrice: receipt.totalAmount,
         helperPay: 0,
         techPay: 0,
-        leadTech: 'Ing. Matías Calderón',
+        leadTech: originals[0]?.leadTech || '-',
         helpers: [],
         status: 'Pasado',
         semaforo: 'naranja'

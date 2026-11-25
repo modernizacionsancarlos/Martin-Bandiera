@@ -267,21 +267,6 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
 
   const selectedTotalServicios = roundCurrency(Math.max(0, selectedTotalFinal - selectedTotalMateriales));
 
-  // Active color picker popover id
-  const [activePickerId, setActivePickerId] = useState<string | null>(null);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
-
-  // Close picker on outside click
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setActivePickerId(null);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
   // Pagination & Sheet Management (10, 20, 50, 100 respuestas para achicar alto de tabla)
   const [itemsPerPage, setItemsPerPage] = useState<number>(() => {
     try {
@@ -366,28 +351,13 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     }
   };
 
-  // Determine effective semáforo
+  // Semáforo always follows the remito status, so the color and ESTADO never disagree.
   const getEffectiveSemaforo = (record: TechnicalAuditRecord): 'verde' | 'naranja' | 'rojo' | 'neutro' => {
-    if (record.semaforo) return record.semaforo;
     if (record.status === 'Cobrado') return 'verde';
     if (record.status === 'Facturado') return 'naranja';
     if (record.status === 'Pasado') return 'naranja';
     if (record.status === 'Cargado') return 'rojo';
     return 'neutro';
-  };
-
-  // Cycle semáforo on single click
-  const handleCycleSemaforo = (id: string, current: 'verde' | 'naranja' | 'rojo' | 'neutro') => {
-    const sequence: ('neutro' | 'verde' | 'naranja' | 'rojo')[] = ['neutro', 'verde', 'naranja', 'rojo'];
-    const currentIndex = sequence.indexOf(current);
-    const next = sequence[(currentIndex + 1) % sequence.length];
-    updateTechnicalAuditRecord(id, { semaforo: next });
-  };
-
-  // Set explicit semáforo
-  const handleSetSemaforo = (id: string, color: 'verde' | 'naranja' | 'rojo' | 'neutro') => {
-    updateTechnicalAuditRecord(id, { semaforo: color });
-    setActivePickerId(null);
   };
 
   // Format date as DD/MM/YY (matches 31/08/26 from screenshot)
@@ -647,6 +617,9 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
   const handleStatusChange = (id: string, newStatus: 'Cargado' | 'Facturado' | 'Pasado' | 'Cobrado') => {
     const record = technicalAuditRecords.find(r => r.id === id);
     if (!record) return;
+    if (newStatus === 'Pasado' || newStatus === 'Cargado') {
+      offerUndo(record, newStatus);
+    }
 
     if (newStatus === 'Cobrado') {
       setPaymentRecord(record);
@@ -664,6 +637,37 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
     }
 
     updateTechnicalAuditRecord(id, { status: newStatus, semaforo: 'rojo' });
+  };
+
+  // Undo for the last status change made from the table
+  const [undoStatus, setUndoStatus] = useState<{ id: string; remitoId: string; label: string; previous: Partial<TechnicalAuditRecord> } | null>(null);
+  const undoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const offerUndo = (record: TechnicalAuditRecord, newStatus: string) => {
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndoStatus({
+      id: record.id,
+      remitoId: record.remitoId,
+      label: `${record.remitoId} pasó a ${newStatus}`,
+      previous: {
+        status: record.status,
+        semaforo: record.semaforo,
+        numeroFactura: record.numeroFactura || '',
+        fechaFactura: record.fechaFactura || '',
+        billedPrice: record.billedPrice,
+        collectedPrice: record.collectedPrice
+      }
+    });
+    undoTimer.current = setTimeout(() => setUndoStatus(null), 8000);
+  };
+
+  const handleUndoStatus = () => {
+    if (!undoStatus) return;
+    updateTechnicalAuditRecord(undoStatus.id, undoStatus.previous);
+    if (undoTimer.current) clearTimeout(undoTimer.current);
+    setUndoStatus(null);
+    setToastMessage(`Se deshizo el cambio de ${undoStatus.remitoId}.`);
+    setTimeout(() => setToastMessage(null), 3000);
   };
 
   // Helper to determine the profit margin percentage of a record (either explicit or implicit from billed/operatingCost)
@@ -1056,21 +1060,6 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
 
           {/* Quick Filters */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* Semáforo Filter Dropdown */}
-            <select
-              value={filterSemaforo}
-              onChange={e => {
-                setFilterSemaforo(e.target.value as any);
-                setCurrentPage(1);
-              }}
-              className="px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-bold"
-            >
-              <option value="all">Semáforo: Todos ({semaforoCounts.total})</option>
-              <option value="verde">🟢 Verde ({semaforoCounts.verde})</option>
-              <option value="naranja">🟠 Naranja ({semaforoCounts.naranja})</option>
-              <option value="rojo">🔴 Rojo ({semaforoCounts.rojo})</option>
-              <option value="neutro">⚪ Neutro ({semaforoCounts.neutro})</option>
-            </select>
 
             <select
               aria-label="Origen del remito"
@@ -1287,7 +1276,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
         <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
           {/* Semáforo Interactive Chips */}
           <div className="flex items-center flex-wrap gap-1.5">
-            <span className="text-[11px] font-bold text-slate-400 uppercase mr-1">Filtrar por Semáforo:</span>
+            <span className="text-[11px] font-bold text-slate-400 uppercase mr-1">Filtrar por estado:</span>
             
             <button
               onClick={() => {
@@ -1311,11 +1300,11 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               }}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                 filterSemaforo === 'verde'
-                  ? 'bg-[#00c04b] text-white shadow-xs ring-2 ring-[#00c04b]/30'
+                  ? 'bg-[#00a83e] text-white shadow-xs ring-2 ring-[#00a83e]/30'
                   : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 hover:bg-emerald-100'
               }`}
             >
-              <span className="w-2.5 h-2.5 rounded-full bg-[#00c04b] border border-white"></span>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#00a83e] border border-white"></span>
               <span>Cobrado ({semaforoCounts.verde})</span>
             </button>
 
@@ -1326,12 +1315,12 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               }}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                 filterSemaforo === 'naranja'
-                  ? 'bg-[#ff5500] text-white shadow-xs ring-2 ring-[#ff5500]/30'
+                  ? 'bg-[#e04a00] text-white shadow-xs ring-2 ring-[#e04a00]/30'
                   : 'bg-orange-50 dark:bg-orange-950/40 text-orange-700 dark:text-orange-400 border border-orange-500/30 hover:bg-orange-100'
               }`}
             >
-              <span className="w-2.5 h-2.5 rounded-full bg-[#ff5500] border border-white"></span>
-              <span>Facturado ({semaforoCounts.naranja})</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#e04a00] border border-white"></span>
+              <span>Facturado / Pasado ({semaforoCounts.naranja})</span>
             </button>
 
             <button
@@ -1341,14 +1330,15 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               }}
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
                 filterSemaforo === 'rojo'
-                  ? 'bg-[#d20418] text-white shadow-xs ring-2 ring-[#d20418]/30'
+                  ? 'bg-[#c4031a] text-white shadow-xs ring-2 ring-[#c4031a]/30'
                   : 'bg-red-50 dark:bg-red-950/40 text-red-700 dark:text-red-400 border border-red-500/30 hover:bg-red-100'
               }`}
             >
-              <span className="w-2.5 h-2.5 rounded-full bg-[#d20418] border border-white"></span>
-              <span>Cargado / Alerta ({semaforoCounts.rojo})</span>
+              <span className="w-2.5 h-2.5 rounded-full bg-[#c4031a] border border-white"></span>
+              <span>Cargado ({semaforoCounts.rojo})</span>
             </button>
 
+            {semaforoCounts.neutro > 0 && (
             <button
               onClick={() => {
                 setFilterSemaforo(filterSemaforo === 'neutro' ? 'all' : 'neutro');
@@ -1361,8 +1351,9 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               }`}
             >
               <span className="w-2.5 h-2.5 rounded-full border-2 border-slate-400"></span>
-              <span>Neutro ({semaforoCounts.neutro})</span>
+              <span>Sin estado ({semaforoCounts.neutro})</span>
             </button>
+            )}
           </div>
 
           {/* Date Filter Inputs */}
@@ -1625,18 +1616,15 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                   const sem = getEffectiveSemaforo(record);
 
                   // Row background and typography classes depending on Semáforo
-                  let rowClasses = 'transition-colors';
-                  if (sem === 'verde') {
-                    rowClasses += ' bg-[#00c04b] text-white hover:bg-[#00ad43] border-b border-[#00a83e]';
-                  } else if (sem === 'naranja') {
-                    rowClasses += ' bg-[#ff5500] text-white hover:bg-[#eb4e00] border-b border-[#e04a00]';
-                  } else if (sem === 'rojo') {
-                    rowClasses += ' bg-[#d20418] text-white hover:bg-[#bf0315] border-b border-[#b50314]';
-                  } else {
-                    rowClasses += ' bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800';
-                  }
-
-                  const isColoredRow = sem === 'verde' || sem === 'naranja' || sem === 'rojo';
+                  const rowClasses =
+                    'transition-colors bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/60 border-b border-slate-100 dark:border-slate-800 text-slate-800 dark:text-slate-100';
+                  const isColoredRow = false;
+                  const semStyle = {
+                    verde: { label: 'Cobrado', badge: 'bg-[#00a83e] text-white' },
+                    naranja: { label: record.status === 'Pasado' ? 'Pasado' : 'Facturado', badge: 'bg-[#e04a00] text-white' },
+                    rojo: { label: 'Cargado', badge: 'bg-[#c4031a] text-white' },
+                    neutro: { label: 'Sin estado', badge: 'bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-300' }
+                  }[sem];
 
                   return (
                     <tr key={record.id} className={rowClasses}>
@@ -1663,52 +1651,21 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                       {isColVisible('semaforo') && (
                         <td className="p-3 text-center whitespace-nowrap">
                           <div className="relative inline-flex items-center justify-center gap-1.5">
-                            {/* Semáforo Interactive Button */}
-                            <button
-                              onClick={() => handleCycleSemaforo(record.id, sem)}
-                              onContextMenu={e => {
-                                e.preventDefault();
-                                setActivePickerId(activePickerId === record.id ? null : record.id);
-                              }}
-                              className="cursor-pointer focus:outline-hidden transition-transform active:scale-95 group"
-                              title={`Semáforo: ${sem.toUpperCase()} (Clic para alternar, o clic derecho para paleta)`}
+                            {/* Status mark: follows ESTADO, shape plus color so it does not rely on color alone */}
+                            <span
+                              className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${semStyle.badge}`}
+                              title={`Estado: ${semStyle.label}`}
+                              aria-label={`Estado: ${semStyle.label}`}
+                              role="img"
                             >
-                              {sem === 'verde' && (
-                                <div className="w-7 h-7 rounded-full border-[3.5px] border-white flex items-center justify-center shadow-xs group-hover:scale-110 transition-transform">
-                                </div>
-                              )}
-
+                              {sem === 'verde' && <Check className="w-4 h-4 stroke-[3]" />}
                               {sem === 'naranja' && (
-                                <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center shadow-xs group-hover:scale-110 transition-transform">
-                                  <svg className="w-3.5 h-3.5 text-[#ff5500] fill-current" viewBox="0 0 24 24">
-                                    <path d="M12 4l8.5 15a1 1 0 0 1-.87 1.5H4.37a1 1 0 0 1-.87-1.5L12 4z" />
-                                  </svg>
-                                </div>
+                                <svg className="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
+                                  <path d="M12 4l8.5 15a1 1 0 0 1-.87 1.5H4.37a1 1 0 0 1-.87-1.5L12 4z" />
+                                </svg>
                               )}
-
-                              {sem === 'rojo' && (
-                                <div className="w-7 h-7 rounded-full bg-white flex items-center justify-center shadow-xs group-hover:scale-110 transition-transform">
-                                  <X className="w-4 h-4 text-[#cc0010] stroke-[4]" />
-                                </div>
-                              )}
-
-                              {sem === 'neutro' && (
-                                <div className="w-7 h-7 rounded-full border-2 border-slate-300 dark:border-slate-600 group-hover:border-cyan-500 flex items-center justify-center transition-colors">
-                                  <div className="w-2.5 h-2.5 rounded-full border-2 border-slate-300 dark:border-slate-600 group-hover:border-cyan-500"></div>
-                                </div>
-                              )}
-                            </button>
-
-                            {/* Quick palette trigger */}
-                            <button
-                              onClick={() => setActivePickerId(activePickerId === record.id ? null : record.id)}
-                              className={`text-[10px] p-0.5 rounded-full transition-opacity opacity-40 hover:opacity-100 cursor-pointer ${
-                                isColoredRow ? 'text-white hover:bg-white/20' : 'text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
-                              }`}
-                              title="Seleccionar color de semáforo"
-                            >
-                              ▾
-                            </button>
+                              {sem === 'rojo' && <X className="w-4 h-4 stroke-[3]" />}
+                            </span>
 
                             {/* ICONO DE MENSAJE AL LADO DEL SEMÁFORO (Titila si no está leído, persiste siempre) */}
                             {record.message ? (
@@ -1759,45 +1716,6 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                               </button>
                             )}
 
-                            {/* Mini Palette Dropdown */}
-                            {activePickerId === record.id && (
-                              <div
-                                ref={pickerRef}
-                                className="absolute left-full top-0 ml-2 z-50 bg-slate-900 text-white rounded-xl shadow-2xl p-2 border border-slate-700 flex items-center gap-1.5 animate-in fade-in zoom-in-95"
-                              >
-                                <button
-                                  onClick={() => handleSetSemaforo(record.id, 'verde')}
-                                  title="Verde (Cobrado / OK)"
-                                  className="w-6 h-6 rounded-full border-2 border-white bg-[#00c04b] hover:scale-110 transition-transform flex items-center justify-center cursor-pointer"
-                                >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-white"></span>
-                                </button>
-
-                                <button
-                                  onClick={() => handleSetSemaforo(record.id, 'naranja')}
-                                  title="Naranja (Facturado / Pendiente)"
-                                  className="w-6 h-6 rounded-full bg-[#ff5500] hover:scale-110 transition-transform flex items-center justify-center cursor-pointer"
-                                >
-                                  <span className="text-[9px] text-white font-bold">▲</span>
-                                </button>
-
-                                <button
-                                  onClick={() => handleSetSemaforo(record.id, 'rojo')}
-                                  title="Rojo (Cargado / Alerta)"
-                                  className="w-6 h-6 rounded-full bg-[#d20418] hover:scale-110 transition-transform flex items-center justify-center cursor-pointer"
-                                >
-                                  <span className="text-[9px] text-white font-black">✕</span>
-                                </button>
-
-                                <button
-                                  onClick={() => handleSetSemaforo(record.id, 'neutro')}
-                                  title="Neutro (Sin color)"
-                                  className="w-6 h-6 rounded-full border border-slate-400 bg-slate-800 hover:scale-110 transition-transform flex items-center justify-center cursor-pointer text-slate-300 text-[9px]"
-                                >
-                                  ⚪
-                                </button>
-                              </div>
-                            )}
                           </div>
                         </td>
                       )}
@@ -1936,7 +1854,7 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
                             {record.isGuardia ? (
                               <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black border shadow-xs ${
                                 isColoredRow
-                                  ? 'bg-white text-[#d20418] border-white'
+                                  ? 'bg-white text-[#c4031a] border-white'
                                   : 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/25'
                               }`}>
                                 <ShieldAlert className="w-2.5 h-2.5" />
@@ -2429,14 +2347,14 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
 
             {/* Status Legend */}
             <div className="hidden lg:flex items-center gap-2.5 pl-3 border-l border-slate-200 dark:border-slate-700 text-[11px]">
-              <span className="inline-flex items-center gap-1 font-bold text-[#00c04b]">
-                <span className="w-2 h-2 rounded-full bg-[#00c04b]"></span> Verde: Cobrado
+              <span className="inline-flex items-center gap-1 font-bold text-[#00a83e]">
+                <span className="w-2 h-2 rounded-full bg-[#00a83e]"></span> Verde: Cobrado
               </span>
               <span className="inline-flex items-center gap-1 font-bold text-[#ff7a00]">
-                <span className="w-2 h-2 rounded-full bg-[#ff5500]"></span> Naranja: Facturado
+                <span className="w-2 h-2 rounded-full bg-[#e04a00]"></span> Naranja: Facturado
               </span>
-              <span className="inline-flex items-center gap-1 font-bold text-[#d20418]">
-                <span className="w-2 h-2 rounded-full bg-[#d20418]"></span> Rojo: Cargado / Alerta
+              <span className="inline-flex items-center gap-1 font-bold text-[#c4031a]">
+                <span className="w-2 h-2 rounded-full bg-[#c4031a]"></span> Rojo: Cargado / Alerta
               </span>
             </div>
           </div>
@@ -2737,65 +2655,6 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
               </div>
             </div>
 
-            {/* Semáforo Setting in Modal */}
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs flex items-center justify-between">
-              <span className="font-bold text-slate-700 dark:text-slate-300">Estado de Semáforo:</span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    handleSetSemaforo(selectedRecord.id, 'verde');
-                    setSelectedRecord(prev => prev ? { ...prev, semaforo: 'verde' } : null);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    getEffectiveSemaforo(selectedRecord) === 'verde'
-                      ? 'bg-[#00c04b] text-white'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  🟢 Verde
-                </button>
-                <button
-                  onClick={() => {
-                    handleSetSemaforo(selectedRecord.id, 'naranja');
-                    setSelectedRecord(prev => prev ? { ...prev, semaforo: 'naranja' } : null);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    getEffectiveSemaforo(selectedRecord) === 'naranja'
-                      ? 'bg-[#ff5500] text-white'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  🟠 Naranja
-                </button>
-                <button
-                  onClick={() => {
-                    handleSetSemaforo(selectedRecord.id, 'rojo');
-                    setSelectedRecord(prev => prev ? { ...prev, semaforo: 'rojo' } : null);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    getEffectiveSemaforo(selectedRecord) === 'rojo'
-                      ? 'bg-[#d20418] text-white'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  🔴 Rojo
-                </button>
-                <button
-                  onClick={() => {
-                    handleSetSemaforo(selectedRecord.id, 'neutro');
-                    setSelectedRecord(prev => prev ? { ...prev, semaforo: 'neutro' } : null);
-                  }}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                    getEffectiveSemaforo(selectedRecord) === 'neutro'
-                      ? 'bg-slate-800 text-white dark:bg-white dark:text-slate-900'
-                      : 'bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  ⚪ Neutro
-                </button>
-              </div>
-            </div>
-
             {/* Description */}
             {selectedRecord.description && (
               <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 text-xs">
@@ -2997,6 +2856,22 @@ export const TechnicalAuditTable: React.FC<TechnicalAuditTableProps> = ({ onOpen
       )}
 
       {/* Floating Toast Notification */}
+      {undoStatus && (
+        <div
+          role="status"
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white pl-5 pr-2 py-2 rounded-2xl shadow-2xl flex items-center gap-3 text-sm font-bold"
+        >
+          <span>{undoStatus.label}</span>
+          <button
+            type="button"
+            onClick={handleUndoStatus}
+            className="px-3 py-1.5 rounded-xl bg-white text-slate-900 hover:bg-slate-200 cursor-pointer"
+          >
+            Deshacer
+          </button>
+        </div>
+      )}
+
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3.5 rounded-2xl shadow-2xl border border-rose-500 flex items-center gap-3 text-xs font-bold animate-in slide-in-from-bottom-3">
           <div className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-pulse" />

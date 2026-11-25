@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import {
   X,
   Printer,
@@ -36,6 +36,14 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
 }) => {
   const { addArchivedReceipt, updateTechnicalAuditRecord } = useData();
   const printRef = useRef<HTMLDivElement | null>(null);
+  // Download, print and save share one archived copy and one number while this window is open.
+  const archivedRef = useRef(false);
+  const [receiptSeed, setReceiptSeed] = useState('');
+  useEffect(() => {
+    if (!isOpen) return;
+    archivedRef.current = false;
+    setReceiptSeed(Date.now().toString(36).toUpperCase());
+  }, [isOpen]);
 
   // Editing description state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -84,7 +92,7 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
   // Generate a receipt number
   const receiptNumber = effectiveRecords.length === 1
     ? `PAS-${firstRecord.remitoId.replace(/[^a-zA-Z0-9]/g, '')}`
-    : `RPC-${Date.now().toString().slice(-6)}`;
+    : `RPC-${receiptSeed}`;
 
   const handleStartEditDesc = (r: TechnicalAuditRecord) => {
     setEditingId(r.id);
@@ -100,9 +108,15 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
     setEditingId(null);
   };
 
+  const archiveOnce = (receipt: Parameters<typeof addArchivedReceipt>[0]) => {
+    if (archivedRef.current) return;
+    archivedRef.current = true;
+    addArchivedReceipt(receipt);
+  };
+
   const handleDownloadPDF = () => {
     // Archive receipt automatically
-    addArchivedReceipt({
+    archiveOnce({
       receiptNumber,
       remitoIds: effectiveRecords.map(r => r.remitoId),
       clientName,
@@ -141,7 +155,7 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
   };
 
   const handlePrint = () => {
-    addArchivedReceipt({
+    archiveOnce({
       receiptNumber,
       remitoIds: effectiveRecords.map(r => r.remitoId),
       clientName,
@@ -156,7 +170,7 @@ export const RemitoPasadoModal: React.FC<RemitoPasadoModalProps> = ({
   };
 
   const handleSaveAndClose = () => {
-    addArchivedReceipt({
+    archiveOnce({
       receiptNumber,
       remitoIds: effectiveRecords.map(r => r.remitoId),
       clientName,

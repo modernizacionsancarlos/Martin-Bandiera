@@ -267,6 +267,7 @@ export interface TechnicalAuditRecord {
   cargadoPor?: string;
   cargadoEn?: string;
   fieldMaterials?: { name: string; qty: number }[];
+  jornadas?: { entrada: string; salida: string; viajes: number }[];
   // Field remitos: who has it now, hand-overs between capataces and edits from the phone.
   cargadoPorNombre?: string;
   asignadoA?: string;

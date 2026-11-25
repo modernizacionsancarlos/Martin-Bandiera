@@ -61,12 +61,12 @@ export const CobradoView: React.FC<CobradoViewProps> = ({ onNavigateToArchive })
 
   // Re-open to Facturado
   const handleReopenToFacturado = (id: string) => {
-    updateTechnicalAuditRecord(id, { status: 'Facturado', semaforo: 'naranja', collectedPrice: 0 });
+    updateTechnicalAuditRecord(id, { status: 'Facturado', semaforo: 'naranja' });
   };
 
   // Re-open to Pasado
   const handleReopenToPasado = (id: string) => {
-    updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja', collectedPrice: 0 });
+    updateTechnicalAuditRecord(id, { status: 'Pasado', semaforo: 'naranja' });
   };
 
   const handleEditPayment = (record: TechnicalAuditRecord) => {

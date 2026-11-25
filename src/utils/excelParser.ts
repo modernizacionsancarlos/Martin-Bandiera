@@ -1,3 +1,4 @@
+import { uniqueId } from './ids';
 import * as XLSX from 'xlsx';
 import { TechnicalAuditRecord, RemitoStatus, ClientItem, MaterialItem, VehicleItem, VehicleEventItem, WorkerItem, WorkerCategory, UserRole } from '../types';
 import { roundCurrency, formatCurrency } from './calculationUtils';
@@ -25,7 +26,7 @@ export interface ExcelClientImportResult {
 }
 
 export interface ExcelMaterialImportResult {
-  materials: Omit<MaterialItem, 'id'>[];
+  materials: Partial<MaterialItem>[];
   errors: string[];
   totalRows: number;
 }
@@ -39,14 +40,13 @@ export interface ExcelWorkerImportResult {
 /**
  * Format date from Excel numeric date serial or standard string
  */
-export const formatExcelDate = (val: any): string => {
-  if (!val) return todayLocalISO();
+const parseExcelDate = (val: any): string | undefined => {
+  if (val === undefined || val === null || val === '') return undefined;
 
   if (typeof val === 'number') {
+    if (val < 20000 || val > 80000) return undefined;
     // Excel base date serial number to JS Date
-    const utcDays = Math.floor(val - 25569);
-    const utcValue = utcDays * 86400;
-    const dateInfo = new Date(utcValue * 1000);
+    const dateInfo = new Date(Math.floor(val - 25569) * 86400 * 1000);
     const yyyy = dateInfo.getUTCFullYear();
     const mm = String(dateInfo.getUTCMonth() + 1).padStart(2, '0');
     const dd = String(dateInfo.getUTCDate()).padStart(2, '0');
@@ -54,23 +54,70 @@ export const formatExcelDate = (val: any): string => {
   }
 
   const str = String(val).trim();
-  // If in DD/MM/YYYY format
-  if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(str)) {
-    const [d, m, y] = str.split('/');
-    return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-  }
+  // DD/MM/YYYY, D-M-YY, DD.MM.YYYY
+  const local = str.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})(?:\s.*)?$/);
+  const iso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
+  const [y, m, d] = local
+    ? [local[3].length === 2 ? 2000 + Number(local[3]) : Number(local[3]), Number(local[2]), Number(local[1])]
+    : iso
+      ? [Number(iso[1]), Number(iso[2]), Number(iso[3])]
+      : [0, 0, 0];
+  if (y < 2000 || m < 1 || m > 12 || d < 1 || d > 31) return undefined;
+  return `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+};
 
-  // If in YYYY-MM-DD format
-  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
-    return str;
+// Amounts as written in Argentina ("1.234,56", "$ 1.234") or as a plain number.
+export const parseExcelNumber = (val: any): number | undefined => {
+  if (val === undefined || val === null || val === '') return undefined;
+  if (typeof val === 'number') return isNaN(val) ? undefined : val;
+  let str = String(val).replace(/[^0-9,.-]/g, '');
+  if (!/\d/.test(str)) return undefined;
+  const comma = str.lastIndexOf(',');
+  const dot = str.lastIndexOf('.');
+  if (comma >= 0 && dot >= 0) {
+    str = comma > dot ? str.replace(/\./g, '').replace(',', '.') : str.replace(/,/g, '');
+  } else if (comma >= 0) {
+    str = /^-?\d{1,3}(,\d{3}){2,}$/.test(str) ? str.replace(/,/g, '') : str.replace(',', '.');
+  } else if (/^-?\d{1,3}(\.\d{3})+$/.test(str)) {
+    str = str.replace(/\./g, '');
   }
+  const n = Number(str);
+  return isNaN(n) ? undefined : n;
+};
 
-  const parsed = new Date(str);
-  if (!isNaN(parsed.getTime())) {
-    return parsed.toISOString().split('T')[0];
-  }
+// First sheet as rows. CSV text is kept as written, so dates and amounts are not read in US format.
+const readRows = async (file: File): Promise<any[]> => {
+  const isText = /\.(csv|txt)$/i.test(file.name);
+  const workbook = isText
+    ? XLSX.read(await file.text(), { type: 'string', raw: true })
+    : XLSX.read(await file.arrayBuffer(), { type: 'array' });
+  return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], { defval: '' });
+};
 
-  return todayLocalISO();
+const headerWords = (header: string): string =>
+  header.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+/**
+ * Column lookup by header. An exact header always wins; otherwise the header must contain the
+ * variant as a word, and none of the excluded words ("Total Facturado" is not an invoice number).
+ */
+const columnGetter = (row: any) => {
+  const columns = Object.keys(row).map(key => ({ key, words: headerWords(key) }));
+  return (variants: string[], exclude: string[] = []): any => {
+    const value = (key: string) => (row[key] !== undefined && row[key] !== null && row[key] !== '' ? row[key] : undefined);
+    for (const v of variants) {
+      const found = columns.find(c => c.words === v || c.words.replace(/ /g, '') === v.replace(/ /g, ''));
+      if (found && value(found.key) !== undefined) return value(found.key);
+    }
+    for (const v of variants) {
+      const pattern = new RegExp(`(^| )${v}${v.length >= 5 ? '' : '( |$)'}`);
+      const found = columns.find(
+        c => pattern.test(c.words) && !exclude.some(x => ` ${c.words}`.includes(` ${x}`)) && value(c.key) !== undefined
+      );
+      if (found) return value(found.key);
+    }
+    return undefined;
+  };
 };
 
 /**
@@ -88,141 +135,110 @@ const normalizeHeader = (header: string): string => {
  * Parse Excel file containing Remitos / Auditoría Técnica
  */
 export const parseRemitosExcel = async (file: File): Promise<ExcelImportResult> => {
-  const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data, { type: 'array' });
-  const firstSheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[firstSheetName];
-  
-  const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+  const rawRows = await readRows(file);
 
   const records: Partial<TechnicalAuditRecord>[] = [];
   const errors: string[] = [];
 
   rawRows.forEach((row, index) => {
     try {
-      // Find field values based on multiple possible header variants
-      const keys = Object.keys(row);
-      const getVal = (...variants: string[]): any => {
-        for (const v of variants) {
-          const normV = normalizeHeader(v);
-          const foundKey = keys.find(k => normalizeHeader(k) === normV || normalizeHeader(k).includes(normV));
-          if (foundKey && row[foundKey] !== undefined && row[foundKey] !== '') {
-            return row[foundKey];
-          }
-        }
-        return undefined;
-      };
+      const getVal = columnGetter(row);
 
-      const remitoIdRaw = getVal('remito', 'nro remito', 'remitoid', 'id', 'numero', 'codigo');
-      const remitoPapelRaw = getVal('papel', 'remito papel', 'nro papel', 'talonario');
-      const dateRaw = getVal('fecha', 'date', 'emision');
-      const clientRaw = getVal('cliente', 'razon social', 'empresa', 'client');
-      const locationRaw = getVal('ubicacion', 'finca', 'lugar', 'sitio', 'localidad', 'zona');
-      const workPointRaw = getVal('punto de trabajo', 'punto', 'pozo', 'sector', 'descripcion punto', 'instalacion', 'lugar de trabajo');
-      const descRaw = getVal(
-        'descripcion de tareas',
-        'descripcion de tarea',
-        'descripcion',
-        'detalle de tareas',
-        'detalle de tarea',
-        'detalle',
-        'trabajos realizados',
-        'trabajo realizado',
-        'trabajos efectuados',
-        'trabajo efectuado',
-        'trabajos',
-        'trabajo',
-        'tareas realizadas',
-        'tarea realizada',
-        'tareas desarrolladas',
-        'tareas',
-        'tarea',
-        'actividades realizadas',
-        'actividad realizada',
-        'actividades',
-        'actividad',
-        'servicio realizado',
-        'servicios realizados',
-        'servicio',
-        'servicios',
-        'labores',
-        'labor',
-        'observaciones',
-        'informe tecnico',
-        'informe',
-        'motivo',
-        'concepto'
+      const remitoIdRaw = getVal(
+        ['remito sistema', 'n remito sistema', 'n remito', 'nro remito', 'numero remito', 'remito', 'remitoid', 'sistema', 'codigo'],
+        ['papel', 'fecha', 'estado', 'cliente', 'costo', 'total', 'detalle']
       );
-      const horasTrabajoRaw = getVal('horas trabajo', 'horas', 'hs trabajo', 'tiempo');
-      const horasViajeRaw = getVal('horas viaje', 'hs viaje');
-      const distanceKmRaw = getVal('km', 'kilometros', 'distancia');
-      const laborCostRaw = getVal('mano de obra', 'servicio', 'costo servicio', 'mo');
-      const materialsCostRaw = getVal('materiales', 'costo materiales', 'mat');
-      const materialsDetailsRaw = getVal('detalle materiales', 'descripcion materiales');
-      const billedPriceRaw = getVal('total facturado', 'monto facturado', 'total', 'precio');
-      const statusRaw = getVal('estado', 'status', 'solapa');
-      const invoiceNumberRaw = getVal('factura', 'nro factura', 'numero factura', 'fac');
-      const invoiceDateRaw = getVal('fecha factura', 'fecha facturacion');
-      const retIVARaw = getVal('ret iva', 'retencion iva', 'iva');
-      const retIIBBRaw = getVal('ret iibb', 'retencion iibb', 'iibb', 'ingresos brutos');
-      const retGanRaw = getVal('ret ganancias', 'retencion ganancias', 'ganancias');
-      const leadTechRaw = getVal('tecnico', 'responsable', 'operario');
+      const remitoPapelRaw = getVal(['papel', 'remito papel', 'n papel', 'nro papel', 'talonario']);
+      const dateRaw = getVal(['fecha', 'fecha remito', 'fecha trabajo', 'emision', 'date'], ['factura', 'cobro', 'pago', 'venc']);
+      const clientRaw = getVal(['cliente', 'razon social', 'empresa', 'client'], ['cuit', 'email', 'telefono']);
+      const locationRaw = getVal(['ubicacion', 'finca', 'sede', 'lugar', 'sitio', 'localidad', 'zona'], ['trabajo']);
+      const workPointRaw = getVal(['punto de trabajo', 'punto', 'pozo', 'sector', 'instalacion', 'lugar de trabajo']);
+      const descRaw = getVal(
+        [
+          'descripcion de tareas', 'descripcion de tarea', 'descripcion', 'detalle de tareas', 'detalle de tarea',
+          'trabajos realizados', 'trabajo realizado', 'trabajos efectuados', 'trabajo efectuado', 'tareas realizadas',
+          'tarea realizada', 'tareas', 'tarea', 'actividades', 'actividad', 'servicio realizado', 'servicios realizados',
+          'labores', 'detalle', 'observaciones', 'informe tecnico', 'informe', 'motivo', 'concepto', 'trabajos', 'trabajo'
+        ],
+        ['material', 'punto', 'horas', 'hs', 'costo', 'lugar', 'fecha']
+      );
+      const hoursRaw = getVal(['horas trabajo', 'horas trabajadas', 'horas', 'hs trabajo', 'hs', 'tiempo'], ['viaje', 'costo', 'valor']);
+      const travelRaw = getVal(['horas viaje', 'hs viaje']);
+      const distanceKmRaw = getVal(['km', 'kms', 'kilometros', 'distancia'], ['costo', 'consumo', 'combustible']);
+      const laborCostRaw = getVal(['mano de obra', 'costo mano de obra', 'm o directa', 'costo servicio', 'total servicio'], ['capataz', 'ayudante']);
+      const materialsCostRaw = getVal(['costo materiales', 'total materiales', 'materiales'], ['detalle', 'descripcion', 'insumos']);
+      const materialsDetailsRaw = getVal(['detalle materiales', 'descripcion materiales', 'materiales insumos', 'insumos']);
+      const billedPriceRaw = getVal(
+        ['costo total del remito', 'total facturado', 'monto facturado', 'precio facturado', 'facturado', 'total', 'precio', 'importe', 'monto'],
+        ['hora', 'hs', 'km', 'viaje', 'ret', 'iva', 'material', 'cobrado', 'unitario', 'combustible', 'servicio', 'fecha', 'mano']
+      );
+      const statusRaw = getVal(['estado', 'status', 'solapa']);
+      const invoiceNumberRaw = getVal(
+        ['factura', 'n factura', 'nro factura', 'numero factura', 'numero de factura', 'n de factura'],
+        ['fecha', 'total', 'monto', 'importe', 'precio', 'facturado', 'facturacion', 'estado', 'dias', 'tipo']
+      );
+      const invoiceDateRaw = getVal(['fecha factura', 'fecha de factura', 'fecha facturacion']);
+      const collectedDateRaw = getVal(['fecha cobro', 'fecha de cobro']);
+      const retIVARaw = getVal(['ret iva', 'retencion iva']);
+      const retIIBBRaw = getVal(['ret iibb', 'retencion iibb', 'iibb', 'ingresos brutos']);
+      const retGanRaw = getVal(['ret ganancias', 'ret gan', 'retencion ganancias', 'ganancias'], ['capataz']);
+      const leadTechRaw = getVal(['capataz', 'tecnico', 'responsable', 'operario'], ['costo', 'pago', 'gan', 'comision', 'm o', 'mano', 'ayudante']);
 
-      const clientName = clientRaw ? String(clientRaw).trim() : 'Cliente Importado';
-      const remitoId = remitoIdRaw ? String(remitoIdRaw).trim() : `R-IMP-${1000 + index}`;
-      const date = formatExcelDate(dateRaw);
-      const fechaFactura = invoiceDateRaw ? formatExcelDate(invoiceDateRaw) : undefined;
+      // Blank, spacer and total rows carry no client.
+      const clientName = clientRaw ? String(clientRaw).trim() : '';
+      if (!clientName || /^total(es)?\b/i.test(clientName)) return;
+
+      const date = parseExcelDate(dateRaw);
+      if (!date) {
+        errors.push(`Fila ${index + 2} (${clientName}): fecha ${dateRaw ? `"${dateRaw}" no reconocida` : 'vacía'}. No se importa.`);
+        return;
+      }
+
+      const invoiceNumber = invoiceNumberRaw ? String(invoiceNumberRaw).trim() : '';
+      const hasInvoice = !!invoiceNumber && invoiceNumber !== '-';
 
       let status: RemitoStatus = 'Cargado';
       if (statusRaw) {
-        const s = String(statusRaw).toLowerCase();
-        if (s.includes('factur')) status = 'Facturado';
-        else if (s.includes('pasad')) status = 'Pasado';
-        else if (s.includes('cobr')) status = 'Cobrado';
-      } else if (invoiceNumberRaw) {
+        const st = String(statusRaw).toLowerCase();
+        if (st.includes('factur')) status = 'Facturado';
+        else if (st.includes('pasad')) status = 'Pasado';
+        else if (st.includes('cobr')) status = 'Cobrado';
+      } else if (hasInvoice) {
         status = 'Facturado';
       }
+      const invoiced = status === 'Facturado' || status === 'Cobrado';
 
-      const laborDirectCost = Number(laborCostRaw) || 0;
-      const materialsCost = Number(materialsCostRaw) || 0;
-      const hoursWorked = Number(horasTrabajoRaw) || 4;
-      const travelHours = Number(horasViajeRaw) || 1;
-      const distanceKm = Number(distanceKmRaw) || 30;
+      const laborDirectCost = parseExcelNumber(laborCostRaw);
+      const materialsCost = parseExcelNumber(materialsCostRaw) ?? 0;
+      const billedRaw = parseExcelNumber(billedPriceRaw);
+      const billedPrice = billedRaw && billedRaw > 0 ? billedRaw : undefined;
 
-      const billedPrice = Number(billedPriceRaw) || (laborDirectCost + materialsCost);
-      const suggestedPrice = billedPrice > 0 ? billedPrice : 150000;
-
+      // What the file does not say stays empty: nothing is invented here.
       records.push({
-        remitoId,
-        remitoPapel: remitoPapelRaw ? String(remitoPapelRaw).trim() : undefined,
+        remitoId: remitoIdRaw ? String(remitoIdRaw).trim() : undefined,
+        remitoPapel: remitoPapelRaw && String(remitoPapelRaw).trim() !== '-' ? String(remitoPapelRaw).trim() : undefined,
         date,
         clientName,
-        siteLocation: locationRaw ? String(locationRaw).trim() : 'Mendoza / Valle de Uco',
-        workPoint: workPointRaw ? String(workPointRaw).trim() : 'Pozo / Tablero Eléctrico',
+        siteLocation: locationRaw ? String(locationRaw).trim() : undefined,
+        workPoint: workPointRaw ? String(workPointRaw).trim() : undefined,
         isGuardia: false,
-        hoursWorked,
-        travelHours,
-        distanceKm,
-        horaEntrada: '08:00',
-        horaSalida: '12:30',
-        logisticsCost: 0,
-        laborDirectCost: laborDirectCost || suggestedPrice * 0.7,
-        operatingCost: laborDirectCost + materialsCost,
+        hoursWorked: parseExcelNumber(hoursRaw),
+        travelHours: parseExcelNumber(travelRaw),
+        distanceKm: parseExcelNumber(distanceKmRaw),
+        laborDirectCost,
         materialsCost,
         materialsDetails: materialsDetailsRaw ? String(materialsDetailsRaw).trim() : undefined,
-        description: descRaw ? String(descRaw).trim() : 'Mantenimiento preventivo e inspección técnica',
-        suggestedPrice,
+        description: descRaw ? String(descRaw).trim() : undefined,
         billedPrice,
-        collectedPrice: status === 'Cobrado' ? billedPrice : 0,
-        leadTech: leadTechRaw ? String(leadTechRaw).trim() : 'Ing. Matías Calderón',
+        leadTech: leadTechRaw ? String(leadTechRaw).trim() : undefined,
         helpers: [],
         status,
-        semaforo: status === 'Cobrado' ? 'verde' : status === 'Facturado' ? 'verde' : status === 'Pasado' ? 'naranja' : 'rojo',
-        numeroFactura: invoiceNumberRaw ? String(invoiceNumberRaw).trim() : undefined,
-        fechaFactura,
-        retencionIVA: Number(retIVARaw) || 0,
-        retencionIIBB: Number(retIIBBRaw) || 0,
-        retencionGanancias: Number(retGanRaw) || 0
+        numeroFactura: invoiced && hasInvoice ? invoiceNumber : undefined,
+        fechaFactura: invoiced ? parseExcelDate(invoiceDateRaw) : undefined,
+        fechaCobro: status === 'Cobrado' ? parseExcelDate(collectedDateRaw) : undefined,
+        retencionIVA: parseExcelNumber(retIVARaw) ?? 0,
+        retencionIIBB: parseExcelNumber(retIIBBRaw) ?? 0,
+        retencionGanancias: parseExcelNumber(retGanRaw) ?? 0
       });
     } catch (err: any) {
       errors.push(`Fila ${index + 2}: ${err.message || 'Error al procesar fila'}`);
@@ -314,47 +330,24 @@ export const downloadRemitosExcelTemplate = (): void => {
  * [Razon Social | Cuit | Finca / Locacion | Email | Telefono | Direccion Fiscal | Latitud | Longitud | Distancia KM]
  */
 export const parseClientesExcel = async (file: File): Promise<ExcelClientImportResult> => {
-  const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data, { type: 'array' });
-  const firstSheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[firstSheetName];
-
-  const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+  const rawRows = await readRows(file);
 
   const clients: Partial<ClientItem>[] = [];
   const errors: string[] = [];
 
-  const parseNumber = (val: any): number | undefined => {
-    if (val === undefined || val === null || val === '') return undefined;
-    if (typeof val === 'number') return val;
-    const str = String(val).trim().replace(',', '.');
-    const n = parseFloat(str);
-    return isNaN(n) ? undefined : n;
-  };
-
   rawRows.forEach((row, index) => {
     try {
-      const keys = Object.keys(row);
-      const getVal = (...variants: string[]): any => {
-        for (const v of variants) {
-          const normV = normalizeHeader(v);
-          const foundKey = keys.find(k => normalizeHeader(k) === normV || normalizeHeader(k).includes(normV));
-          if (foundKey && row[foundKey] !== undefined && row[foundKey] !== '') {
-            return row[foundKey];
-          }
-        }
-        return undefined;
-      };
+      const getVal = columnGetter(row);
 
-      const razonSocialRaw = getVal('razon social', 'razonsocial', 'cliente', 'empresa', 'nombre');
-      const cuitRaw = getVal('cuit', 'cuit/cuil', 'cuil', 'identificacion');
-      const fincaLocacionRaw = getVal('finca / locacion', 'fincalocacion', 'finca', 'locacion', 'sede', 'sucursal', 'ubicacion');
-      const emailRaw = getVal('email', 'correo', 'mail', 'contacto');
-      const telefonoRaw = getVal('telefono', 'tel', 'celular', 'phone');
-      const direccionFiscalRaw = getVal('direccion fiscal', 'direccionfiscal', 'direccion', 'domicilio', 'calle');
-      const latitudRaw = getVal('latitud', 'lat');
-      const longitudRaw = getVal('longitud', 'lng', 'lon');
-      const distanciaKmRaw = getVal('distancia km', 'distanciakm', 'distancia', 'km', 'kms');
+      const razonSocialRaw = getVal(['razon social', 'cliente', 'empresa', 'nombre'], ['contacto', 'finca', 'fiscal']);
+      const cuitRaw = getVal(['cuit', 'cuit cuil', 'cuil', 'identificacion']);
+      const fincaLocacionRaw = getVal(['finca locacion', 'finca', 'locacion', 'sede', 'sucursal', 'ubicacion']);
+      const emailRaw = getVal(['email', 'correo', 'mail']);
+      const telefonoRaw = getVal(['telefono', 'tel', 'celular', 'phone']);
+      const direccionFiscalRaw = getVal(['direccion fiscal', 'direccion', 'domicilio', 'calle']);
+      const latitudRaw = getVal(['latitud', 'lat']);
+      const longitudRaw = getVal(['longitud', 'lng', 'lon']);
+      const distanciaKmRaw = getVal(['distancia km', 'distancia', 'km', 'kms']);
 
       if (!razonSocialRaw) {
         // Skip empty spacer rows
@@ -367,12 +360,12 @@ export const parseClientesExcel = async (file: File): Promise<ExcelClientImportR
       const email = emailRaw ? String(emailRaw).trim() : '';
       const telefono = telefonoRaw ? String(telefonoRaw).trim() : '';
       const direccionFiscal = direccionFiscalRaw ? String(direccionFiscalRaw).trim() : '';
-      const latitud = parseNumber(latitudRaw);
-      const longitud = parseNumber(longitudRaw);
-      const distanciaKm = parseNumber(distanciaKmRaw) || 0;
+      const latitud = parseExcelNumber(latitudRaw);
+      const longitud = parseExcelNumber(longitudRaw);
+      const distanciaKm = parseExcelNumber(distanciaKmRaw) || 0;
 
       clients.push({
-        id: `CLI-${Date.now().toString().slice(-4)}-${index + 1}`,
+        id: uniqueId('CLI'),
         razonSocial,
         cuit,
         fincaLocacion,
@@ -542,22 +535,10 @@ export const downloadMaterialesExcelTemplate = (): void => {
  * Parse an Excel file (.xlsx / .xls / .csv) into MaterialItem items
  */
 export const parseMaterialesExcel = async (file: File): Promise<ExcelMaterialImportResult> => {
-  const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data, { type: 'array' });
-  const firstSheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[firstSheetName];
-  const rawRows: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+  const rawRows = await readRows(file);
 
-  const materials: Omit<MaterialItem, 'id'>[] = [];
+  const materials: Partial<MaterialItem>[] = [];
   const errors: string[] = [];
-
-  const parseNumber = (val: any): number | undefined => {
-    if (val === undefined || val === null || val === '') return undefined;
-    if (typeof val === 'number') return val;
-    const str = String(val).trim().replace(',', '.');
-    const n = parseFloat(str);
-    return isNaN(n) ? undefined : n;
-  };
 
   const validCategories: MaterialItem['category'][] = [
     'Electricidad',
@@ -590,26 +571,16 @@ export const parseMaterialesExcel = async (file: File): Promise<ExcelMaterialImp
 
   rawRows.forEach((row, index) => {
     try {
-      const keys = Object.keys(row);
-      const getVal = (...variants: string[]): any => {
-        for (const v of variants) {
-          const normV = normalizeHeader(v);
-          const foundKey = keys.find(k => normalizeHeader(k) === normV || normalizeHeader(k).includes(normV));
-          if (foundKey && row[foundKey] !== undefined && row[foundKey] !== '') {
-            return row[foundKey];
-          }
-        }
-        return undefined;
-      };
+      const getVal = columnGetter(row);
 
-      const nameRaw = getVal('nombre / descripcion', 'nombre descripcion', 'nombre', 'descripcion', 'material', 'insumo', 'producto', 'articulo', 'item');
-      const codeRaw = getVal('codigo', 'cod', 'sku', 'art', 'id', 'clave');
-      const categoryRaw = getVal('categoria', 'rubro', 'tipo', 'familia', 'grupo');
-      const stockRaw = getVal('stock inicial', 'stock actual', 'stock', 'cantidad', 'cant', 'existencia');
-      const unitRaw = getVal('unidad de medida', 'unidad', 'medida', 'um');
-      const minStockRaw = getVal('stock minimo', 'minimo', 'alerta', 'min');
-      const unitPriceRaw = getVal('precio unitario', 'precio', 'costo unitario', 'costo', 'valor');
-      const locationRaw = getVal('ubicacion deposito', 'ubicacion', 'deposito', 'almacen', 'estanteria', 'sector');
+      const nameRaw = getVal(['nombre descripcion', 'nombre', 'descripcion', 'material', 'insumo', 'producto', 'articulo', 'item'], ['codigo', 'categoria']);
+      const codeRaw = getVal(['codigo', 'cod', 'sku', 'art', 'id', 'clave']);
+      const categoryRaw = getVal(['categoria', 'rubro', 'tipo', 'familia', 'grupo']);
+      const stockRaw = getVal(['stock inicial', 'stock actual', 'stock', 'cantidad', 'cant', 'existencia'], ['minimo', 'valor']);
+      const unitRaw = getVal(['unidad de medida', 'unidad', 'medida', 'um'], ['precio']);
+      const minStockRaw = getVal(['stock minimo', 'minimo', 'alerta', 'min']);
+      const unitPriceRaw = getVal(['precio unitario', 'precio', 'costo unitario', 'costo'], ['total']);
+      const locationRaw = getVal(['ubicacion deposito', 'ubicacion', 'deposito', 'almacen', 'estanteria', 'sector']);
 
       if (!nameRaw && !codeRaw) {
         // Skip empty rows
@@ -617,25 +588,17 @@ export const parseMaterialesExcel = async (file: File): Promise<ExcelMaterialImp
       }
 
       const name = String(nameRaw || codeRaw || 'Material Sin Nombre').trim();
-      const code = String(codeRaw || `MAT-${Date.now().toString().slice(-4)}-${index + 1}`).trim();
-      const category = normalizeCategory(String(categoryRaw || ''));
-      const stock = parseNumber(stockRaw) ?? 0;
-      const unit = String(unitRaw || 'Unidades').trim();
-      const minStock = parseNumber(minStockRaw) ?? 0;
-      const unitPrice = parseNumber(unitPriceRaw) ?? 0;
-      const location = String(locationRaw || 'Depósito Central').trim();
 
+      // Columns missing in the file stay undefined, so an existing material keeps its value.
       materials.push({
-        code,
+        code: codeRaw ? String(codeRaw).trim() : undefined,
         name,
-        category,
-        stock,
-        unit,
-        minStock,
-        unitPrice,
-        location,
-        tenantId: 'tenant_bandiera_hq',
-        lastUpdated: todayLocalISO()
+        category: categoryRaw ? normalizeCategory(String(categoryRaw)) : undefined,
+        stock: parseExcelNumber(stockRaw),
+        unit: unitRaw ? String(unitRaw).trim() : undefined,
+        minStock: parseExcelNumber(minStockRaw),
+        unitPrice: parseExcelNumber(unitPriceRaw),
+        location: locationRaw ? String(locationRaw).trim() : undefined
       });
     } catch (err: any) {
       errors.push(`Fila ${index + 2}: ${err.message || 'Error al procesar material'}`);

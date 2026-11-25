@@ -479,6 +479,14 @@ export const generateFacturaAgrupadaPDF = (data: {
   const totalGanancias = data.records.reduce((acc, r) => acc + (r.retencionGanancias || 0), 0);
   const totalRetenciones = totalIVA + totalIIBB + totalGanancias;
   const totalNeto = Math.max(0, totalServicios - totalRetenciones);
+  // 7% and IVA saved when invoicing; older invoices have none.
+  const recargo = roundCurrency(data.records.reduce((acc, r) => acc + (r.recargo7Pct || 0), 0));
+  const ivaFactura = roundCurrency(data.records.reduce((acc, r) => acc + (r.ivaAmount || 0), 0));
+  // The old system could save totalFacturado without the 7% and IVA: that is not an invoice total.
+  const hasInvoiceDetail = data.records.every(r => (r.totalFacturado || 0) > (r.billedPrice || 0)) && recargo + ivaFactura > 0;
+  const totalFactura = hasInvoiceDetail
+    ? roundCurrency(data.records.reduce((acc, r) => acc + (r.totalFacturado || 0), 0))
+    : roundCurrency(totalServicios);
 
   // Top Bar
   doc.setFillColor(30, 58, 138); // Blue-900
@@ -584,7 +592,7 @@ export const generateFacturaAgrupadaPDF = (data: {
 
   // @ts-ignore
   const factFinalY = (doc as any).lastAutoTable.finalY || 120;
-  if (factFinalY + 44 > 270) {
+  if (factFinalY + 56 > 270) {
     doc.addPage();
     currentY = 22;
   } else {
@@ -594,7 +602,8 @@ export const generateFacturaAgrupadaPDF = (data: {
   // Financial summary
   doc.setFillColor(239, 246, 255); // Blue-50
   doc.setDrawColor(191, 219, 254);
-  doc.roundedRect(110, currentY, 86, 36, 2, 2, 'FD');
+  const detailShift = hasInvoiceDetail ? 12 : 0;
+  doc.roundedRect(110, currentY, 86, 36 + detailShift, 2, 2, 'FD');
 
   doc.setFontSize(8);
   doc.setTextColor(71, 85, 105);
@@ -602,23 +611,31 @@ export const generateFacturaAgrupadaPDF = (data: {
   doc.setFont('helvetica', 'bold');
   doc.text(formatCurrency(totalServicios), 190, currentY + 7, { align: 'right' });
 
+  if (hasInvoiceDetail) {
+    doc.setFont('helvetica', 'normal');
+    doc.text('Recargo 7%:', 114, currentY + 13);
+    doc.text(formatCurrency(recargo), 190, currentY + 13, { align: 'right' });
+    doc.text(`IVA ${data.records[0]?.ivaPct || 21}%:`, 114, currentY + 19);
+    doc.text(formatCurrency(ivaFactura), 190, currentY + 19, { align: 'right' });
+  }
+
   if (totalRetenciones > 0) {
     doc.setFont('helvetica', 'normal');
-    doc.text('Retenciones Estimadas (IVA/IIBB/Gan):', 114, currentY + 14);
+    doc.text('Retenciones Estimadas (IVA/IIBB/Gan):', 114, currentY + 14 + detailShift);
     doc.setFont('helvetica', 'bold');
-    doc.text(`-${formatCurrency(totalRetenciones)}`, 190, currentY + 14, { align: 'right' });
+    doc.text(`-${formatCurrency(totalRetenciones)}`, 190, currentY + 14 + detailShift, { align: 'right' });
   }
 
   doc.setDrawColor(147, 197, 253);
-  doc.line(114, currentY + 19, 192, currentY + 19);
+  doc.line(114, currentY + 19 + detailShift, 192, currentY + 19 + detailShift);
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(15, 23, 42);
-  doc.text('TOTAL FACTURADO:', 114, currentY + 27);
+  doc.text('TOTAL FACTURADO:', 114, currentY + 27 + detailShift);
   doc.setFontSize(11);
   doc.setTextColor(30, 58, 138);
-  doc.text(formatCurrency(totalServicios), 190, currentY + 27, { align: 'right' });
+  doc.text(formatCurrency(totalFactura), 190, currentY + 27 + detailShift, { align: 'right' });
 
   // Multi-page Footer
   const totalFactPages = doc.getNumberOfPages();

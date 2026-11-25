@@ -5,6 +5,7 @@
  */
 import { supabase } from './supabase';
 import { callQueued, pendingRpcIds } from './docstore';
+import { uniqueId } from '../utils/ids';
 
 export const SUBMIT_FN = 'submit_field_report';
 export const UPDATE_FN = 'update_field_report';
@@ -146,7 +147,7 @@ export function markFailed(id: string): void {
 }
 
 export function newFieldReportId(): string {
-  return `AUD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+  return uniqueId('AUD');
 }
 
 export async function submitFieldReport(payload: FieldReportPayload, id = newFieldReportId()): Promise<string> {

@@ -77,6 +77,7 @@ export const FieldRemitoForm: React.FC<Props> = ({ directory, defaultLeadTech, i
   const [sending, setSending] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
+  const sendingRef = useRef(false);
 
   useEffect(() => {
     const url = initial?.signatureUrl;
@@ -177,6 +178,8 @@ export const FieldRemitoForm: React.FC<Props> = ({ directory, defaultLeadTech, i
       return setError('Sin capataz, agregue al menos una persona al equipo.');
     }
     if (totalHours <= 0) return setError('Revise los horarios de entrada y salida.');
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setError(null);
     setSending(true);
     const first = jornadas[0];
@@ -216,6 +219,7 @@ export const FieldRemitoForm: React.FC<Props> = ({ directory, defaultLeadTech, i
         ? 'Su usuario no tiene permiso para cargar remitos.'
         : isEdit ? 'No se pudieron guardar los cambios. Intente de nuevo.' : 'No se pudo enviar el remito. Intente de nuevo.');
       setSending(false);
+      sendingRef.current = false;
     }
   };
 

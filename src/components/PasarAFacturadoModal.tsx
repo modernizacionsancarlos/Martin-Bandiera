@@ -66,6 +66,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
   const [pickClient, setPickClient] = useState<string>('');
   const [invoiceConflictOk, setInvoiceConflictOk] = useState(false);
   const [sinFactura, setSinFactura] = useState(false);
+  const [zeroOk, setZeroOk] = useState(false);
   const [numeroFactura, setNumeroFactura] = useState<string>('');
   const [fechaFactura, setFechaFactura] = useState<string>(todayLocalISO());
   
@@ -136,6 +137,7 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
     setIvaRate(21);
     setError(null);
     setInvoiceConflictOk(false);
+    setZeroOk(false);
   }, [isOpen, recordsKey]);
 
   useEffect(() => {
@@ -206,6 +208,12 @@ export const PasarAFacturadoModal: React.FC<PasarAFacturadoModalProps> = ({
     const targetIds = effectiveRecords.map(r => r.id);
     if (targetIds.length === 0) {
       setError('Debe seleccionar al menos un remito para pasar al estado facturado.');
+      return;
+    }
+
+    if (zeroAmountCount > 0 && !zeroOk) {
+      setZeroOk(true);
+      setError(`${zeroAmountCount === 1 ? 'Un remito no tiene' : `${zeroAmountCount} remitos no tienen`} monto y se factura en $0. Para facturar igual, confirme de nuevo.`);
       return;
     }
 

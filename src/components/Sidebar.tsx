@@ -13,6 +13,7 @@ import {
   Boxes,
   Users,
   Shield,
+  ShieldCheck,
   Database,
   ChevronLeft,
   ChevronRight,
@@ -48,6 +49,7 @@ interface SidebarProps {
   onOpenFirebaseModal: () => void;
   onOpenResetModal?: () => void;
   onOpenImportExcel?: () => void;
+  canAudit?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -58,7 +60,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenNewReport,
   onOpenFirebaseModal,
   onOpenResetModal,
-  onOpenImportExcel
+  onOpenImportExcel,
+  canAudit = false
 }) => {
   const { technicalAuditRecords, archivedReceipts, clients, workers, vehicles } = useData();
   const {
@@ -237,6 +240,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           badge: 'DB',
           badgeColor: 'bg-emerald-500 text-slate-950 font-black'
         },
+        ...(canAudit
+          ? [{ id: 'control', label: 'Control y Auditoría', subtitle: 'Accesos y cambios', icon: ShieldCheck, badge: null }]
+          : []),
         {
           id: 'administracion',
           label: 'Parámetros & Costos Fijos',

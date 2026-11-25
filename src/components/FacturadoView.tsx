@@ -29,6 +29,7 @@ import { TechnicalAuditRecord } from '../types';
 import { useData } from '../context/DataContext';
 import { PaymentModal } from './PaymentModal';
 import { ExcelImportModal } from './ExcelImportModal';
+import { roundCurrency } from '../utils/calculationUtils';
 import { PasarAFacturadoModal, isSinFactura } from './PasarAFacturadoModal';
 import { ActualizarDescripcionesModal } from './ActualizarDescripcionesModal';
 import { generateFacturaAgrupadaPDF, generateRemitoPasadoPDF } from '../utils/pdfGenerator';
@@ -53,7 +54,17 @@ export const FacturadoView: React.FC = () => {
   const [tempBilledVal, setTempBilledVal] = useState<number>(0);
 
   const handleSaveBilledAmount = (id: string) => {
-    updateTechnicalAuditRecord(id, { billedPrice: tempBilledVal, totalFacturado: tempBilledVal });
+    const record = technicalAuditRecords.find(r => r.id === id);
+    const base = roundCurrency(tempBilledVal);
+    // The 7% and IVA of the invoice follow the new base.
+    const recargo = record?.recargo7Pct ? roundCurrency(base * 0.07) : 0;
+    const iva = record?.ivaAmount ? roundCurrency((base + recargo) * ((record.ivaPct || 21) / 100)) : 0;
+    updateTechnicalAuditRecord(id, {
+      billedPrice: base,
+      ...(record?.montoBaseRemito !== undefined
+        ? { montoBaseRemito: base, recargo7Pct: recargo, ivaAmount: iva, totalFacturado: roundCurrency(base + recargo + iva) }
+        : {})
+    });
     setEditingBilledId(null);
   };
 
@@ -209,11 +220,13 @@ export const FacturadoView: React.FC = () => {
   const handleApplyGroupInvoice = () => {
     const invoiceNumToApply = groupInvoiceMode === 'new' ? newInvoiceNumber.trim() : selectedExistingInvoice.trim();
     if (!invoiceNumToApply) return;
+    // Joining an existing invoice keeps its date: the days count from there.
+    const existing = groupInvoiceMode === 'existing' ? groupableInvoices.find(inv => inv.invoiceNumber === invoiceNumToApply) : undefined;
 
     selectedRecords.forEach(id => {
       updateTechnicalAuditRecord(id, {
         numeroFactura: invoiceNumToApply,
-        fechaFactura: newInvoiceDate
+        fechaFactura: existing?.invoiceDate || newInvoiceDate
       });
     });
 
@@ -243,6 +256,9 @@ export const FacturadoView: React.FC = () => {
 
   const isMultiClientSelected = selectedClients.length > 1;
 
+  // Only invoices of the selected clients: another client's invoice is not offered.
+  const groupableInvoices = existingInvoices.filter(inv => selectedClients.includes(inv.clientName));
+
   // Print & Download PDF handlers
   const handleDownloadSinglePDF = (record: TechnicalAuditRecord) => {
     generateRemitoPasadoPDF(record);
@@ -253,8 +269,9 @@ export const FacturadoView: React.FC = () => {
   };
 
   // Download Grouped Invoice PDF
-  const handleDownloadInvoicePDF = (invoiceNumber: string) => {
-    const matchingRecords = facturados.filter(r => r.numeroFactura === invoiceNumber);
+  // "SIN FACTURA" is shared by many clients: the PDF is always for one client.
+  const handleDownloadInvoicePDF = (invoiceNumber: string, clientName: string) => {
+    const matchingRecords = facturados.filter(r => r.numeroFactura === invoiceNumber && r.clientName === clientName);
     if (matchingRecords.length === 0) return;
 
     generateFacturaAgrupadaPDF({
@@ -757,7 +774,7 @@ export const FacturadoView: React.FC = () => {
                                   {record.numeroFactura}
                                 </span>
                                 <button
-                                  onClick={() => handleDownloadInvoicePDF(record.numeroFactura!)}
+                                  onClick={() => handleDownloadInvoicePDF(record.numeroFactura!, record.clientName)}
                                   className="p-1 text-slate-400 hover:text-indigo-600 transition-colors cursor-pointer"
                                   title={`Descargar Detalle Factura ${record.numeroFactura} en PDF`}
                                 >
@@ -1083,9 +1100,9 @@ export const FacturadoView: React.FC = () => {
                   <label className="block text-xs font-black uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1.5">
                     SELECCIONAR FACTURA EXISTENTE
                   </label>
-                  {existingInvoices.length === 0 ? (
+                  {groupableInvoices.length === 0 ? (
                     <p className="text-xs text-slate-400 italic p-3 rounded-xl bg-slate-50 dark:bg-slate-800">
-                      No hay facturas previas registradas. Por favor elija "Crear Nueva Factura".
+                      No hay facturas previas de este cliente. Por favor elija "Crear Nueva Factura".
                     </p>
                   ) : (
                     <select
@@ -1094,7 +1111,7 @@ export const FacturadoView: React.FC = () => {
                       className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono font-bold text-xs text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 cursor-pointer"
                     >
                       <option value="">-- Seleccione una Factura --</option>
-                      {existingInvoices.map(inv => (
+                      {groupableInvoices.map(inv => (
                         <option key={`${inv.clientName}-${inv.invoiceNumber}`} value={inv.invoiceNumber}>
                           {inv.invoiceNumber} · {inv.clientName} ({inv.count} remitos)
                         </option>

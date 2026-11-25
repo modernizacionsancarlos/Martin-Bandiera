@@ -15,6 +15,7 @@ import {
   Receipt
 } from 'lucide-react';
 import { TechnicalAuditRecord, PaymentEntry, ArchivedReceipt } from '../types';
+import { roundCurrency } from '../utils/calculationUtils';
 import { useData } from '../context/DataContext';
 import { generateReciboCobroPDF } from '../utils/pdfGenerator';
 import { todayLocalISO } from '../utils/dateUtils';
@@ -34,7 +35,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   invoiceNumber,
   onSuccess
 }) => {
-  const { updateTechnicalAuditRecord, addArchivedReceipt } = useData();
+  const { updateTechnicalAuditRecord, addArchivedReceipt, archivedReceipts } = useData();
+  const confirmedRef = React.useRef(false);
 
   if (!isOpen || records.length === 0) return null;
 
@@ -66,7 +68,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
   // Multiple payment entries state
   const [paymentEntries, setPaymentEntries] = useState<PaymentEntry[]>(() => {
     // If existing in first record, prefill
-    if (first.paymentMethods && first.paymentMethods.length > 0) {
+    if (records.length === 1 && first.paymentMethods && first.paymentMethods.length > 0) {
       return first.paymentMethods;
     }
     // Default 1 entry matching totalNetoACobrar
@@ -90,7 +92,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
   // Calculate total currently assigned in payment entries
   const totalPagadoEntries = paymentEntries.reduce((acc, e) => acc + (Number(e.amount) || 0), 0);
-  const remainingDifference = totalNetoACobrar - totalPagadoEntries;
+  const remainingDifference = roundCurrency(totalNetoACobrar - totalPagadoEntries);
+  const [differenceAccepted, setDifferenceAccepted] = useState(false);
 
   const handleAddPaymentEntry = () => {
     const nextAmount = Math.max(0, remainingDifference);
@@ -119,31 +122,61 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     setPaymentEntries(prev => prev.filter(item => item.id !== id));
   };
 
+  // The parent screens close this window on success: tell them when the receipt was already seen.
+  const handleClose = () => {
+    if (isSuccessView && onSuccess) onSuccess();
+    onClose();
+  };
+
   const handleConfirmCobro = () => {
-    // Distribute retenciones proportionally across records if multiple
-    const count = Math.max(1, records.length);
-    const ivaPerRecord = Math.round((retencionIVA || 0) / count);
-    const iibbPerRecord = Math.round((retencionIIBB || 0) / count);
-    const gananciasPerRecord = Math.round((retencionGanancias || 0) / count);
+    if (confirmedRef.current) return;
+    if (remainingDifference !== 0 && !differenceAccepted) {
+      setDifferenceAccepted(true);
+      return;
+    }
+    confirmedRef.current = true;
+    // Retenciones and payments are shared by the amount of each remito; the last one takes the cents left.
+    const amounts = records.map(r => (r.billedPrice > 0 ? r.billedPrice : r.suggestedPrice || 0));
+    const shares = (total: number): number[] => {
+      let assigned = 0;
+      return records.map((_, i) => {
+        const part = i === records.length - 1
+          ? roundCurrency(total - assigned)
+          : roundCurrency(total * (totalFacturadoSum > 0 ? amounts[i] / totalFacturadoSum : 1 / records.length));
+        assigned += part;
+        return part;
+      });
+    };
+    const ivaShares = shares(retencionIVA || 0);
+    const iibbShares = shares(retencionIIBB || 0);
+    const gananciasShares = shares(retencionGanancias || 0);
+    const entryShares = paymentEntries.map(e => shares(Number(e.amount) || 0));
+    const wasCollected = records.every(r => r.status === 'Cobrado');
 
     // 1. Update all records to Cobrado
-    records.forEach(r => {
+    records.forEach((r, i) => {
       updateTechnicalAuditRecord(r.id, {
         status: 'Cobrado',
         semaforo: 'verde',
         numeroFactura: invoiceNumberState || r.numeroFactura,
         fechaCobro: paymentDate,
-        retencionIVA: ivaPerRecord,
-        retencionIIBB: iibbPerRecord,
-        retencionGanancias: gananciasPerRecord,
-        paymentMethods: paymentEntries,
+        retencionIVA: ivaShares[i],
+        retencionIIBB: iibbShares[i],
+        retencionGanancias: gananciasShares[i],
+        paymentMethods: paymentEntries.map((e, j) => ({ ...e, amount: entryShares[j][i] })),
         collectedPrice: r.billedPrice || r.suggestedPrice
       });
     });
 
     // 2. Generate Receipt / PDF and Save to Archivo
-    const receiptNum = `REC-${records[0].remitoId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
+    // Correcting a payment updates its receipt instead of archiving a second one.
+    const idsKey = records.map(r => r.remitoId).sort().join('|');
+    const previous = wasCollected
+      ? archivedReceipts.find(a => a.type === 'RECIBO_COBRADO' && [...a.remitoIds].sort().join('|') === idsKey)
+      : undefined;
+    const receiptNum = previous?.receiptNumber || `REC-${records[0].remitoId.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString(36).toUpperCase()}`;
     const savedReceipt = addArchivedReceipt({
+      ...(previous ? { id: previous.id } : {}),
       receiptNumber: receiptNum,
       remitoIds: records.map(r => r.remitoId),
       clientName: commonClient,
@@ -160,10 +193,6 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
 
     setGeneratedReceipt(savedReceipt);
     setIsSuccessView(true);
-
-    if (onSuccess) {
-      onSuccess();
-    }
   };
 
   const handleDownloadPDF = () => {
@@ -206,7 +235,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="p-1.5 rounded-full hover:bg-white/20 text-white transition-colors cursor-pointer"
             title="Cerrar"
           >
@@ -619,7 +648,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         {/* Footer */}
         <div className="p-3 sm:p-4 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="w-full sm:w-auto px-4 py-2 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
           >
             {isSuccessView ? 'Finalizar y Volver' : 'Cancelar'}
@@ -631,11 +660,15 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
               className="w-full sm:w-auto flex items-center justify-center gap-1.5 px-6 py-2.5 rounded-xl text-xs font-black bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-md shadow-emerald-600/20 cursor-pointer"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>CONFIRMAR COBRO, GENERAR PDF Y ARCHIVAR</span>
+              <span>
+                {remainingDifference !== 0 && differenceAccepted
+                  ? `${remainingDifference > 0 ? 'FALTAN' : 'SOBRAN'} $${Math.abs(remainingDifference).toLocaleString('es-AR')}: CONFIRMAR IGUAL`
+                  : 'CONFIRMAR COBRO, GENERAR PDF Y ARCHIVAR'}
+              </span>
             </button>
           ) : (
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="w-full sm:w-auto px-6 py-2.5 rounded-xl text-xs font-black bg-slate-900 dark:bg-white text-white dark:text-slate-900 transition-all cursor-pointer"
             >
               Cerrar y Ver Solapa Cobrado

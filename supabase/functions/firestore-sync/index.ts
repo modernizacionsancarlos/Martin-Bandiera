@@ -1,4 +1,4 @@
-// Copies the old system (Firestore) into Supabase. Runs every 15 minutes from pg_cron.
+// Copies the old system (Firestore) into Supabase. Runs every 3 hours from pg_cron.
 // Same rules as scripts/sync_firestore_to_supabase.mjs, plus: a document is applied again only when it
 // changed in Firestore since the last copy, so edits made in the new system are kept.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -109,18 +109,55 @@ async function sync() {
     const [incomingDocs, current, state] = await Promise.all([readFirestore(name), readSupabase(name), readState(name)]);
     const writes: { collection: string; id: string; data: Record<string, unknown> }[] = [];
     const states: { collection: string; id: string; hash: string; synced_at: string }[] = [];
-    const counts = { nuevos: 0, actualizados: 0, sinCambios: 0, protegidos: 0, soloSupabase: 0 };
+    const counts = { nuevos: 0, actualizados: 0, sinCambios: 0, protegidos: 0, rescatados: 0, unificados: 0, borradosAca: 0, soloSupabase: 0 };
     const seen = new Set<string>();
+    const replaces: { collection: string; id: string; data: Record<string, unknown> }[] = [];
+    // Same number and same paper: the same remito, whatever its internal id.
+    const remitoKey = (r: Record<string, unknown>) => `${r.remitoId}|${r.remitoPapel}`;
+    const incomingIds = new Set(incomingDocs.map(d => d.id));
+    const incomingKeys = new Set(incomingDocs.map(d => remitoKey(d.data)));
+    const currentKeys = new Map<string, number>();
+    current.forEach(r => currentKeys.set(remitoKey(r), (currentKeys.get(remitoKey(r)) || 0) + 1));
+    // Remitos rescued earlier, in case the old system loads them again under another id.
+    const rescued = new Map<string, string>();
+    current.forEach((r, rid) => {
+      if (r.recuperado && !incomingIds.has(rid)) rescued.set(remitoKey(r), rid);
+    });
+    const deletes: string[] = [];
     const now = new Date().toISOString();
 
     for (const { id, data } of incomingDocs) {
       seen.add(id);
+      // The old system may store a Pasado remito with the 7% inside or not: it is removed only when it is there.
       if (name === 'auditRecords' && data.status === 'Pasado' && Number(data.billedPrice) > 0) {
-        data.billedPrice = Math.round(Number(data.billedPrice) / 1.07);
+        const base = ['logisticsCost', 'techPay', 'helperPay', 'materialsCost', 'honorarios'].reduce((acc, k) => acc + (Number(data[k]) || 0), 0);
+        const suggested = Number(data.suggestedPrice) || 0;
+        const price = Number(data.billedPrice);
+        if ([base, suggested].some(x => x > 0 && Math.abs(price / x - 1.07) < 0.004)) data.billedPrice = Math.round(price / 1.07);
       }
       const h = await hash(stable(data));
+      // A remito not invoiced has no invoice: the old system leaves there the one of the remito it overwrote.
+      if (name === 'auditRecords' && data.status === 'Cargado') {
+        if (data.numeroFactura) data.numeroFactura = '';
+        if (data.fechaFactura) data.fechaFactura = '';
+      }
       const existing = current.get(id);
       if (!existing) {
+        const rescuedId = name === 'auditRecords' ? rescued.get(remitoKey(data)) : undefined;
+        if (rescuedId) {
+          // Same remito loaded again: one record, with the complete rescued data under the new id.
+          writes.push({ collection: name, id, data: { ...data, ...current.get(rescuedId), id, keepRemitoNumber: true } });
+          deletes.push(rescuedId);
+          states.push({ collection: name, id, hash: h, synced_at: now });
+          counts.unificados++;
+          continue;
+        }
+        // Copied before, unchanged there and no longer here: it was deleted in the new system, so it does not come back.
+        // A changed document may be a different remito on a reused id: that one is copied.
+        if (state.get(id) === h) {
+          counts.borradosAca++;
+          continue;
+        }
         counts.nuevos++;
         writes.push({ collection: name, id, data: name === 'auditRecords' ? { ...data, keepRemitoNumber: true } : data });
         states.push({ collection: name, id, hash: h, synced_at: now });
@@ -132,6 +169,27 @@ async function sync() {
       }
       if (state.get(id) === h) {
         counts.sinCambios++;
+        continue;
+      }
+      // The old system reuses internal ids (4 digits), so a new remito can land on top of another one.
+      // Keep the previous remito under its own id and number, unless it was loaded again.
+      if (
+        name === 'auditRecords' &&
+        existing.remitoId && existing.remitoId !== data.remitoId &&
+        (existing.remitoPapel !== data.remitoPapel || existing.clientName !== data.clientName) &&
+        !incomingKeys.has(remitoKey(existing)) && currentKeys.get(remitoKey(existing)) === 1
+      ) {
+        const rescuedId = `AUD-REC-${id.replace(/^AUD-/, '')}-${String(existing.remitoId).replace(/[^A-Za-z0-9]/g, '')}`;
+        counts.rescatados++;
+        writes.push({
+          collection: name,
+          id: rescuedId,
+          data: { ...existing, id: rescuedId, keepRemitoNumber: true, recuperado: true, recuperadoDe: id, recuperadoEn: now }
+        });
+        // Replaced, not merged: nothing of the previous remito stays in the new one.
+        replaces.push({ collection: name, id, data });
+        states.push({ collection: name, id, hash: h, synced_at: now });
+        counts.actualizados++;
         continue;
       }
       states.push({ collection: name, id, hash: h, synced_at: now });
@@ -146,6 +204,14 @@ async function sync() {
 
     for (let i = 0; i < writes.length; i += 100) {
       const { error } = await supabase.rpc('merge_documents', { p_rows: writes.slice(i, i + 100) });
+      if (error) throw new Error(`${name}: ${error.message}`);
+    }
+    if (replaces.length) {
+      const { error } = await supabase.from('documents').upsert(replaces, { onConflict: 'collection,id' });
+      if (error) throw new Error(`${name}: ${error.message}`);
+    }
+    if (deletes.length) {
+      const { error } = await supabase.from('documents').delete().eq('collection', name).in('id', deletes);
       if (error) throw new Error(`${name}: ${error.message}`);
     }
     for (let i = 0; i < states.length; i += 500) {

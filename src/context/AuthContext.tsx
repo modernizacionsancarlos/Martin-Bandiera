@@ -1,3 +1,4 @@
+import { uniqueId } from '../utils/ids';
 import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { UserProfile, UserRole, RolePermissions } from '../types';
 import { INITIAL_USERS, ADMIN_PERMISSIONS, SUPERADMIN_PERMISSIONS } from '../data/initialData';
@@ -909,7 +910,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return existingUser;
     }
 
-    const newUid = userData.uid || `usr_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+    const newUid = userData.uid || uniqueId('USR');
 
     // If this user was previously deleted, unmark it so it can be re-created
     unmarkUserAsDeletedLocally(newUid, cleanEmail);

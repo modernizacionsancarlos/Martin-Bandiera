@@ -71,9 +71,16 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({ onOpenImportExcel 
   const totalInventoryValue = materials.reduce((s, m) => s + (m.stock || 0) * (m.unitPrice || 0), 0);
   const lowStockItems = materials.filter(m => (m.stock || 0) <= (m.minStock || 0));
 
+  // A double click must not create the material twice.
+  const submittedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (showAddModal) submittedRef.current = false;
+  }, [showAddModal]);
+
   const handleCreate = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name || !code) return;
+    if (!name || !code || submittedRef.current) return;
+    submittedRef.current = true;
 
     addMaterial({
       code,

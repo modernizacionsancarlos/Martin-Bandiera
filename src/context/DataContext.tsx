@@ -16,6 +16,7 @@ import {
   VehicleEventItem
 } from '../types';
 import { BillingDetailsPayload, billingBase } from '../components/PasarAFacturadoModal';
+import { changedFields, uniqueId } from '../utils/ids';
 import {
   INITIAL_FINANCIAL_REPORTS,
   INITIAL_PROJECTS,
@@ -123,7 +124,7 @@ interface DataContextType {
 
   // Technical Audit Records Actions
   addTechnicalAuditRecord: (record: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => void;
-  bulkAddTechnicalAuditRecords: (records: Partial<TechnicalAuditRecord>[]) => void;
+  bulkAddTechnicalAuditRecords: (records: Partial<TechnicalAuditRecord>[]) => { added: number; skipped: number };
   bulkUpdateAuditRecordDescriptions: (updates: { id: string; description: string }[]) => Promise<number>;
   bulkPassToFacturado: (recordIds: string[], numeroFactura: string, fechaFactura: string, billing?: BillingDetailsPayload) => Promise<number>;
   updateTechnicalAuditRecord: (id: string, updates: Partial<TechnicalAuditRecord>) => void;
@@ -147,7 +148,7 @@ interface DataContextType {
   // Materials Actions
   updateMaterialStock: (id: string, newStock: number) => void;
   addMaterial: (material: Omit<MaterialItem, 'id' | 'lastUpdated'>) => void;
-  bulkAddMaterials: (materials: Partial<MaterialItem>[]) => void;
+  bulkAddMaterials: (materials: Partial<MaterialItem>[]) => { added: number; updated: number };
   deleteMaterial: (id: string) => void;
 
   // Worker Actions
@@ -159,7 +160,7 @@ interface DataContextType {
   // Clientes Actions (Base de Datos de Clientes)
   clients: ClientItem[];
   addClient: (client: Omit<ClientItem, 'id'> & { id?: string }) => void;
-  bulkAddClients: (clients: Partial<ClientItem>[]) => void;
+  bulkAddClients: (clients: Partial<ClientItem>[]) => { added: number; skipped: number };
   updateClient: (id: string, updates: Partial<ClientItem>) => void;
   deleteClient: (id: string) => void;
 
@@ -733,7 +734,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addTechnicalAuditRecord = (recordInput: Omit<TechnicalAuditRecord, 'id' | 'remitoId' | 'logisticsCost' | 'laborDirectCost' | 'operatingCost' | 'suggestedPrice'> & { remitoId?: string }) => {
     // Unique across devices: remitos may be created offline on several phones at once.
-    const id = `AUD-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+    const id = uniqueId('AUD');
     
     let remitoId = recordInput.remitoId;
     if (!remitoId) {
@@ -819,6 +820,19 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (leavesInvoice && updates.numeroFactura === undefined) {
             updated.numeroFactura = '';
             updated.fechaFactura = '';
+            updated.montoBaseRemito = 0;
+            updated.recargo7Pct = 0;
+            updated.ivaAmount = 0;
+            updated.totalFacturado = 0;
+          }
+          // No longer collected: the payment goes away with the status.
+          if (item.status === 'Cobrado' && updates.status && updates.status !== 'Cobrado') {
+            updated.collectedPrice = 0;
+            updated.fechaCobro = '';
+            updated.paymentMethods = [];
+            updated.retencionIVA = 0;
+            updated.retencionIIBB = 0;
+            updated.retencionGanancias = 0;
           }
           if (updates.status === 'Cobrado' && !updates.collectedPrice) {
             updated.collectedPrice = updated.billedPrice;
@@ -834,8 +848,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (!updates.semaforo) updated.semaforo = 'rojo';
           }
 
-          // Auto-recalculate operator costs by hour if hoursWorked or team changed without explicit cost override
-          if ((updates.hoursWorked !== undefined || updates.isGuardia !== undefined || updates.guardiaType !== undefined || updates.guardiaMode !== undefined || updates.guardiaAmount !== undefined || updates.marginPercentage !== undefined || updates.leadTech !== undefined || updates.helpers !== undefined) && updates.laborDirectCost === undefined) {
+          // Auto-recalculate operator costs by hour if hoursWorked or team changed without explicit cost override.
+          // The margin does not change labor: recalculating on it would undo a labor cost set by hand.
+          if ((updates.hoursWorked !== undefined || updates.isGuardia !== undefined || updates.guardiaType !== undefined || updates.guardiaMode !== undefined || updates.guardiaAmount !== undefined || updates.leadTech !== undefined || updates.helpers !== undefined) && updates.laborDirectCost === undefined) {
             const reCalc = calculateAuditCosts(technicalParameters, {
               hoursWorked: updated.hoursWorked ?? 4,
               travelHours: updated.travelHours ?? 1,
@@ -908,7 +923,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const updatedRecord = newRecords.find(r => r.id === id);
       if (updatedRecord) {
-        saveAuditRecordToFirestore(updatedRecord).catch(() => {});
+        // Only what changed: a full copy from this screen could undo somebody else's edit.
+        saveAuditRecordToFirestore(changedFields(prev.find(r => r.id === id), updatedRecord)).catch(() => {});
         setFinancialReports(finReports =>
           finReports.map(f => {
             if (f.code === updatedRecord.remitoId || f.id === `REP-${updatedRecord.id}`) {
@@ -930,16 +946,49 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
-  const bulkAddTechnicalAuditRecords = (recordsInput: Partial<TechnicalAuditRecord>[]) => {
-    const formatted: TechnicalAuditRecord[] = recordsInput.map((rec, idx) => {
-      const id = rec.id || `AUD-IMP-${Date.now().toString().slice(-4)}-${idx + 1}`;
-      const remitoId = rec.remitoId || `R-IMP-${Date.now().toString().slice(-4)}-${idx + 1}`;
-      
+  const bulkAddTechnicalAuditRecords = (recordsInput: Partial<TechnicalAuditRecord>[]): { added: number; skipped: number } => {
+    // Imported remitos continue the R-IMP numbering; a number already used belongs to another remito.
+    const usedNumbers = new Set(technicalAuditRecords.map(r => r.remitoId));
+    let nextImp = technicalAuditRecords.reduce((max, r) => {
+      const match = (r.remitoId || '').match(/^R-IMP-(\d+)$/);
+      return match ? Math.max(max, parseInt(match[1], 10)) : max;
+    }, 999) + 1;
+
+    // The same remito (number, or paper and client) is not loaded twice.
+    const norm = (v?: string) => (v || '').toLowerCase().trim();
+    const keysOf = (r: Partial<TechnicalAuditRecord>) => {
+      const papel = norm(r.remitoPapel);
+      return [
+        r.remitoId ? `n|${norm(r.remitoId)}|${norm(r.clientName)}` : '',
+        papel && papel !== '-' ? `p|${papel}|${norm(r.clientName)}` : '',
+        !r.remitoId && !papel ? `d|${r.date}|${norm(r.clientName)}|${norm(r.description)}|${r.billedPrice || 0}` : ''
+      ].filter(Boolean);
+    };
+    const known = new Set<string>();
+    technicalAuditRecords.forEach(r => {
+      keysOf(r).forEach(k => known.add(k));
+      known.add(`d|${r.date}|${norm(r.clientName)}|${norm(r.description)}|${r.billedPrice || 0}`);
+    });
+
+    const formatted: TechnicalAuditRecord[] = [];
+    let skipped = 0;
+    recordsInput.forEach(rec => {
+      const keys = keysOf(rec);
+      if (keys.some(k => known.has(k))) {
+        skipped++;
+        return;
+      }
+      keys.forEach(k => known.add(k));
+
+      const id = rec.id || uniqueId('AUD-IMP');
+      const remitoId = rec.remitoId && !usedNumbers.has(rec.remitoId) ? rec.remitoId : `R-IMP-${nextImp++}`;
+      usedNumbers.add(remitoId);
+
       const costs = calculateAuditCosts(
         technicalParameters,
         {
-          hoursWorked: rec.hoursWorked ?? 4,
-          travelHours: rec.travelHours ?? 1,
+          hoursWorked: rec.hoursWorked ?? 0,
+          travelHours: rec.travelHours ?? 0,
           viajes: rec.viajes,
           distanceKm: rec.distanceKm ?? 0,
           materialsCost: rec.materialsCost ?? 0,
@@ -954,11 +1003,18 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       );
 
       const status = rec.status || 'Cargado';
-      const laborDirectCost = rec.laborDirectCost ?? costs.laborDirectCost;
-      const operatingCost = rec.operatingCost ?? roundCurrency((rec.logisticsCost ?? costs.logisticsCost) + laborDirectCost + (rec.materialsCost ?? 0));
-      const billedPrice = rec.billedPrice && rec.billedPrice > 0 ? rec.billedPrice : (rec.suggestedPrice ?? costs.suggestedPrice);
+      // Costs come from the file, or are calculated only when the file gives hours or distance.
+      const logisticsCost = rec.logisticsCost ?? (rec.distanceKm ? costs.logisticsCost : 0);
+      const techPay = rec.laborDirectCost ?? (rec.hoursWorked ? costs.techPay : 0);
+      const helperPay = rec.laborDirectCost !== undefined ? 0 : rec.hoursWorked ? costs.helperPay : 0;
+      const laborDirectCost = roundCurrency(techPay + helperPay);
+      const materialsCost = rec.materialsCost ?? 0;
+      const operatingCost = roundCurrency(logisticsCost + laborDirectCost + materialsCost);
+      const defaultMargin = technicalParameters.defaultMarginPercentage ?? 35;
+      const price = rec.billedPrice && rec.billedPrice > 0 ? rec.billedPrice : roundCurrency(operatingCost * (1 + defaultMargin / 100));
+      const honorarios = Math.max(0, roundCurrency(price - operatingCost));
 
-      return {
+      formatted.push({
         id,
         remitoId,
         remitoPapel: rec.remitoPapel,
@@ -968,36 +1024,40 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         workPoint: rec.workPoint || 'Pozo / Instalación',
         isGuardia: rec.isGuardia || false,
         guardiaType: rec.guardiaType || 'NO_GUARDIA',
-        hoursWorked: rec.hoursWorked ?? 4,
-        travelHours: rec.travelHours ?? 1,
-        distanceKm: rec.distanceKm ?? 30,
-        horaEntrada: rec.horaEntrada || '08:00',
-        horaSalida: rec.horaSalida || '12:30',
-        logisticsCost: rec.logisticsCost ?? costs.logisticsCost,
+        hoursWorked: rec.hoursWorked ?? 0,
+        travelHours: rec.travelHours ?? 0,
+        distanceKm: rec.distanceKm ?? 0,
+        horaEntrada: rec.horaEntrada || '',
+        horaSalida: rec.horaSalida || '',
+        logisticsCost,
         laborDirectCost,
         operatingCost,
-        materialsCost: rec.materialsCost ?? 0,
+        materialsCost,
         materialsDetails: rec.materialsDetails,
         description: rec.description || 'Trabajos importados desde Excel',
-        suggestedPrice: rec.suggestedPrice ?? costs.suggestedPrice,
-        billedPrice,
-        collectedPrice: rec.collectedPrice ?? (status === 'Cobrado' ? billedPrice : 0),
-        helperPay: costs.helperPay,
-        techPay: costs.techPay,
-        leadTech: rec.leadTech || 'Ing. Matías Calderón',
+        honorarios,
+        marginPercentage: operatingCost > 0 ? Math.round((honorarios / operatingCost) * 100) : 0,
+        suggestedPrice: price,
+        billedPrice: price,
+        collectedPrice: status === 'Cobrado' ? price : 0,
+        helperPay,
+        techPay,
+        leadTech: rec.leadTech || '',
         helpers: rec.helpers || [],
         status,
-        semaforo: status === 'Cobrado' ? 'verde' : status === 'Facturado' ? 'verde' : status === 'Pasado' ? 'naranja' : 'rojo',
+        semaforo: status === 'Cobrado' ? 'verde' : status === 'Facturado' || status === 'Pasado' ? 'naranja' : 'rojo',
         numeroFactura: rec.numeroFactura,
         fechaFactura: rec.fechaFactura,
+        fechaCobro: rec.fechaCobro,
         retencionIVA: rec.retencionIVA || 0,
         retencionIIBB: rec.retencionIIBB || 0,
         retencionGanancias: rec.retencionGanancias || 0
-      };
+      });
     });
 
     setTechnicalAuditRecords(prev => [...formatted, ...prev]);
-    formatted.forEach(r => saveAuditRecordToFirestore(r).catch(() => {}));
+    saveAuditRecordsBatchToFirestore(formatted).catch(() => {});
+    return { added: formatted.length, skipped };
   };
 
   const bulkUpdateAuditRecordDescriptions = async (updates: { id: string; description: string }[]): Promise<number> => {
@@ -1015,7 +1075,9 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         return rec;
       });
-      updatedRecords = next.filter(r => updateMap.has(r.id));
+      updatedRecords = next
+        .filter(r => updateMap.has(r.id))
+        .map(r => ({ id: r.id, description: r.description }) as TechnicalAuditRecord);
       try {
         localStorage.setItem(`${STORAGE_KEY}_tech_audits`, JSON.stringify(next));
       } catch {}
@@ -1093,7 +1155,8 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return f;
         })
       );
-      await saveAuditRecordsBatchToFirestore(updatedRecords);
+      const before = new Map<string, TechnicalAuditRecord>(targets.map(r => [r.id, r] as [string, TechnicalAuditRecord]));
+      await saveAuditRecordsBatchToFirestore(updatedRecords.map(r => changedFields(before.get(r.id), r)));
     }
     return updatedRecords.length;
   };
@@ -1116,10 +1179,10 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const addArchivedReceipt = (receiptInput: Omit<ArchivedReceipt, 'id' | 'createdAt'> & { id?: string }): ArchivedReceipt => {
     const newReceipt: ArchivedReceipt = {
       ...receiptInput,
-      id: receiptInput.id || `ARC-${Date.now().toString().slice(-6)}`,
+      id: receiptInput.id || uniqueId('ARC'),
       createdAt: new Date().toISOString()
     };
-    setArchivedReceipts(prev => [newReceipt, ...prev]);
+    setArchivedReceipts(prev => [newReceipt, ...prev.filter(r => r.id !== newReceipt.id)]);
     saveArchivedReceiptToFirestore(newReceipt).catch(() => {});
     return newReceipt;
   };
@@ -1131,7 +1194,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Financial actions
   const addFinancialReport = (report: Omit<FinancialMetricRecord, 'id' | 'pendingBalance'>) => {
-    const id = `REP-${Date.now().toString().slice(-5)}`;
+    const id = uniqueId('REP');
     const pendingBalance = Math.max(0, report.facturado - report.cobrado);
     const newRecord: FinancialMetricRecord = {
       ...report,
@@ -1163,7 +1226,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Projects actions
   const addProject = (project: Omit<ProjectItem, 'id'>) => {
-    const id = `PRJ-${Date.now().toString().slice(-4)}`;
+    const id = uniqueId('PRJ');
     const newProject: ProjectItem = { ...project, id };
     setProjects(prev => [{ ...project, id }, ...prev]);
     saveProjectToFirestore(newProject).catch(() => {});
@@ -1187,7 +1250,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Maintenance actions
   const addMaintenanceService = (service: Omit<MaintenanceServiceItem, 'id'>) => {
-    const id = `MNT-${Date.now().toString().slice(-4)}`;
+    const id = uniqueId('MNT');
     const newService: MaintenanceServiceItem = { ...service, id };
     setMaintenanceServices(prev => [{ ...service, id }, ...prev]);
     saveMaintenanceServiceToFirestore(newService).catch(() => {});
@@ -1228,7 +1291,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const addMaterial = (material: Omit<MaterialItem, 'id' | 'lastUpdated'>) => {
-    const id = `MAT-${Date.now().toString().slice(-4)}`;
+    const id = uniqueId('MAT');
     const newMaterial: MaterialItem = {
       ...material,
       id,
@@ -1244,63 +1307,52 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveMaterialToFirestore(newMaterial).catch(() => {});
   };
 
-  const bulkAddMaterials = (newMaterials: Partial<MaterialItem>[]) => {
-    const formatted: MaterialItem[] = newMaterials
-      .filter(m => (m.name && m.name.trim() !== '') || (m.code && m.code.trim() !== ''))
-      .map((m, i) => ({
-        id: m.id || `MAT-${Date.now().toString().slice(-4)}-${i + 1}`,
-        code: m.code?.trim() || `MAT-GEN-${i + 1}`,
-        name: m.name?.trim() || 'Material Sin Nombre',
-        category: (m.category as any) || 'Electricidad',
-        stock: Number(m.stock) ?? 0,
-        unit: m.unit?.trim() || 'Unidades',
-        minStock: Number(m.minStock) ?? 0,
-        unitPrice: Number(m.unitPrice) ?? 0,
-        location: m.location?.trim() || 'Depósito Central',
-        tenantId: m.tenantId || 'tenant_bandiera_hq',
-        lastUpdated: m.lastUpdated || todayLocalISO()
-      }));
+  const bulkAddMaterials = (newMaterials: Partial<MaterialItem>[]): { added: number; updated: number } => {
+    const norm = (v?: string) => (v || '').toLowerCase().trim();
+    const list = [...materials];
+    const changed = new Map<string, MaterialItem>();
+    let added = 0;
+    let updatedCount = 0;
 
-    setMaterials(prev => {
-      const map = new Map<string, MaterialItem>();
-      prev.forEach(p => {
-        const k = (p.code || p.name).toLowerCase().trim();
-        map.set(k, p);
-      });
-
-      const updated = [...prev];
-      const newlyAdded: MaterialItem[] = [];
-
-      formatted.forEach(item => {
-        const key = (item.code || item.name).toLowerCase().trim();
-        const existing = map.get(key);
-        if (existing) {
-          const idx = updated.findIndex(m => m.id === existing.id);
-          if (idx !== -1) {
-            const merged: MaterialItem = {
-              ...updated[idx],
-              ...item,
-              id: existing.id,
-              stock: item.stock !== undefined ? item.stock : updated[idx].stock,
-              unitPrice: item.unitPrice > 0 ? item.unitPrice : updated[idx].unitPrice,
-              lastUpdated: todayLocalISO()
-            };
-            updated[idx] = merged;
-            saveMaterialToFirestore(merged).catch(() => {});
-          }
-        } else {
-          newlyAdded.push(item);
-          map.set(key, item);
-          saveMaterialToFirestore(item).catch(() => {});
+    newMaterials
+      .filter(m => norm(m.name) || norm(m.code))
+      .forEach(m => {
+        // By code when the file has one, otherwise by name: importing again updates, never duplicates.
+        const idx = list.findIndex(x => (norm(m.code) ? norm(x.code) === norm(m.code) : norm(x.name) === norm(m.name)));
+        if (idx >= 0) {
+          const defined = Object.fromEntries(Object.entries(m).filter(([k, v]) => v !== undefined && k !== 'id'));
+          const merged: MaterialItem = { ...list[idx], ...defined, id: list[idx].id, lastUpdated: todayLocalISO() };
+          if (!(m.unitPrice && m.unitPrice > 0)) merged.unitPrice = list[idx].unitPrice;
+          list[idx] = merged;
+          changed.set(merged.id, merged);
+          updatedCount++;
+          return;
         }
+        const id = uniqueId('MAT');
+        const item: MaterialItem = {
+          id,
+          code: m.code?.trim() || id,
+          name: m.name?.trim() || 'Material Sin Nombre',
+          category: m.category || 'Electricidad',
+          stock: m.stock ?? 0,
+          unit: m.unit?.trim() || 'Unidades',
+          minStock: m.minStock ?? 0,
+          unitPrice: m.unitPrice ?? 0,
+          location: m.location?.trim() || 'Depósito Central',
+          tenantId: m.tenantId || 'tenant_bandiera_hq',
+          lastUpdated: todayLocalISO()
+        };
+        list.unshift(item);
+        changed.set(id, item);
+        added++;
       });
 
-      const finalMaterials = [...newlyAdded, ...updated];
-      try {
-        localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(finalMaterials));
-      } catch {}
-      return finalMaterials;
-    });
+    setMaterials(list);
+    try {
+      localStorage.setItem(`${STORAGE_KEY}_materials`, JSON.stringify(list));
+    } catch {}
+    saveMaterialsBatchToFirestore([...changed.values()]).catch(() => {});
+    return { added, updated: updatedCount };
   };
 
   const deleteMaterial = (id: string) => {
@@ -1346,7 +1398,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     // Determine ID: If matching user exists, use their uid; otherwise create a canonical WRK ID
-    const id = existingUser?.uid || `WRK-${Date.now().toString().slice(-6)}-${Math.random().toString(36).substr(2, 4)}`;
+    const id = existingUser?.uid || uniqueId('WRK');
     const newWorker: WorkerItem = { ...worker, id };
 
     unmarkUserAsDeletedLocally(newWorker.id, newWorker.email);
@@ -1549,7 +1601,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedCount++;
         } else {
           // Employee does NOT exist -> Add as a new entry
-          const newId = `WRK-${Date.now().toString().slice(-4)}-${idx + 1}`;
+          const newId = uniqueId('WRK');
           const newEntry: WorkerItem = {
             ...incomingWorker,
             id: newId
@@ -1580,7 +1632,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Clientes Actions (Base de Datos de Clientes)
   const addClient = (clientInput: Omit<ClientItem, 'id'> & { id?: string }) => {
-    const id = clientInput.id || `CLI-${Date.now().toString().slice(-4)}`;
+    const id = clientInput.id || uniqueId('CLI');
     const newClient: ClientItem = {
       ...clientInput,
       id,
@@ -1590,33 +1642,41 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveClientToFirestore(newClient).catch(() => {});
   };
 
-  const bulkAddClients = (newClients: Partial<ClientItem>[]) => {
-    const formatted: ClientItem[] = newClients
-      .filter(c => c.razonSocial && c.razonSocial.trim() !== '')
-      .map((c, i) => ({
-        id: c.id || `CLI-${Date.now().toString().slice(-4)}-${i + 1}`,
-        razonSocial: c.razonSocial?.trim() || 'Cliente Sin Nombre',
-        cuit: c.cuit?.trim() || '',
-        fincaLocacion: c.fincaLocacion?.trim() || '',
-        email: c.email?.trim() || '',
-        telefono: c.telefono?.trim() || '',
-        direccionFiscal: c.direccionFiscal?.trim() || '',
-        latitud: c.latitud,
-        longitud: c.longitud,
-        distanciaKm: Number(c.distanciaKm) || 0,
-        notes: c.notes?.trim() || '',
-        createdAt: c.createdAt || new Date().toISOString()
-      }));
+  const bulkAddClients = (newClients: Partial<ClientItem>[]): { added: number; skipped: number } => {
+    // One company may have several fincas with the same CUIT: name and finca together identify a client.
+    const norm = (v?: string) => (v || '').toLowerCase().trim();
+    const keyOf = (c: Partial<ClientItem>) => `${norm(c.razonSocial)}|${norm(c.fincaLocacion)}`;
+    const known = new Set(clients.map(keyOf));
+    const toAdd: ClientItem[] = [];
+    let skipped = 0;
 
-    setClients(prev => {
-      const existingCuits = new Set(prev.map(c => c.cuit).filter(Boolean));
-      const existingNames = new Set(prev.map(c => c.razonSocial.toLowerCase().trim()));
-      const toAdd = formatted.filter(c => 
-        (c.cuit && !existingCuits.has(c.cuit)) || (!c.cuit && !existingNames.has(c.razonSocial.toLowerCase().trim()))
-      );
-      toAdd.forEach(c => saveClientToFirestore(c).catch(() => {}));
-      return [...toAdd, ...prev];
-    });
+    newClients
+      .filter(c => c.razonSocial && c.razonSocial.trim() !== '')
+      .forEach(c => {
+        if (known.has(keyOf(c))) {
+          skipped++;
+          return;
+        }
+        known.add(keyOf(c));
+        toAdd.push({
+          id: c.id || uniqueId('CLI'),
+          razonSocial: c.razonSocial!.trim(),
+          cuit: c.cuit?.trim() || '',
+          fincaLocacion: c.fincaLocacion?.trim() || '',
+          email: c.email?.trim() || '',
+          telefono: c.telefono?.trim() || '',
+          direccionFiscal: c.direccionFiscal?.trim() || '',
+          latitud: c.latitud,
+          longitud: c.longitud,
+          distanciaKm: Number(c.distanciaKm) || 0,
+          notes: c.notes?.trim() || '',
+          createdAt: c.createdAt || new Date().toISOString()
+        });
+      });
+
+    setClients(prev => [...toAdd, ...prev]);
+    saveClientsBatchToFirestore(toAdd).catch(() => {});
+    return { added: toAdd.length, skipped };
   };
 
   const updateClient = (id: string, updates: Partial<ClientItem>) => {
@@ -1645,7 +1705,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPatente = (vehData.patente || '').trim().toUpperCase();
     const newVehicle: VehicleItem = {
       ...vehData,
-      id: vehData.id || `veh_${cleanPatente.replace(/\s+/g, '_').toLowerCase()}_${Date.now().toString().slice(-4)}`,
+      id: vehData.id || uniqueId('VEH'),
       patente: cleanPatente,
       currentMileageKm: Number(vehData.currentMileageKm) || Number(vehData.initialMileageKm) || 0,
       initialMileageKm: Number(vehData.initialMileageKm) || 0,
@@ -1752,7 +1812,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPatente = (eventData.patente || '').trim().toUpperCase();
     const newEvent: VehicleEventItem = {
       ...eventData,
-      id: eventData.id || `evt_${Date.now().toString().slice(-6)}_${Math.random().toString(36).substr(2, 4)}`,
+      id: eventData.id || uniqueId('EVT'),
       patente: cleanPatente,
       mileageKm: Number(eventData.mileageKm) || 0,
       cost: Number(eventData.cost) || 0,

@@ -110,12 +110,15 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
 
   // 7. FIRMA DE CONFORMIDAD
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // A double click must not create the remito twice.
+  const submittedRef = useRef(false);
   const [isDrawing, setIsDrawing] = useState(false);
   const [hasSignature, setHasSignature] = useState(false);
 
   // Pre-populate all fields when editing an existing technical audit record
   useEffect(() => {
     if (!isOpen) return;
+    submittedRef.current = false;
 
     if (recordToEdit) {
       setDate(recordToEdit.date || todayLocalISO());
@@ -133,7 +136,10 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       setDistanceKm(recordToEdit.distanceKm || 15);
       setDescription(recordToEdit.description || '');
 
-      if (recordToEdit.horaEntrada && recordToEdit.horaSalida) {
+      if (recordToEdit.jornadas && recordToEdit.jornadas.length > 0) {
+        // Loaded from the app with several shifts: all of them count.
+        setJornadas(recordToEdit.jornadas.map((j, i) => ({ id: String(i + 1), entrada: j.entrada, salida: j.salida, viajes: Number(j.viajes) || 0 })));
+      } else if (recordToEdit.horaEntrada && recordToEdit.horaSalida) {
         setJornadas([
           {
             id: '1',
@@ -673,6 +679,8 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
       return;
     }
     setFormError(null);
+    if (submittedRef.current) return;
+    submittedRef.current = true;
 
     let signatureUrl = '';
     if (canvasRef.current && hasSignature) {
@@ -704,6 +712,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         distanceKm: effectiveDistanceKm,
         horaEntrada: jornadas[0]?.entrada || '08:00',
         horaSalida: jornadas[0]?.salida || '13:30',
+        jornadas: jornadas.map(({ entrada, salida, viajes }) => ({ entrada, salida, viajes })),
         materialsCost: totalMaterialsCost,
         materialsDetails: materialsList.map(m => `${m.qty}x ${m.name}`).join(', ') || undefined,
         description: description || 'Mantenimiento técnico e inspección electromecánica.',
@@ -745,6 +754,7 @@ export const FieldReportModal: React.FC<FieldReportModalProps> = ({ isOpen, onCl
         distanceKm: effectiveDistanceKm,
         horaEntrada: jornadas[0]?.entrada || '08:00',
         horaSalida: jornadas[0]?.salida || '13:30',
+        jornadas: jornadas.map(({ entrada, salida, viajes }) => ({ entrada, salida, viajes })),
         materialsCost: totalMaterialsCost,
         materialsDetails: materialsList.map(m => `${m.qty}x ${m.name}`).join(', ') || undefined,
         description: description || 'Mantenimiento técnico e inspección electromecánica.',
